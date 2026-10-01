@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>War Room Act Guide</title>
+<style>
+  /* Picture-first explainer for one storyline act. Written for a projector and for readers whose first
+     language is not English: short sentences, big icons, one diagram, the answer hidden until the debrief. */
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel-2: #243247; --text: #e2e8f0; --muted: #94a3b8; --border: #334155;
+    --teal: #14b8a6; --purple: #a78bfa; --amber: #f59e0b; --red: #f87171; --green: #34d399; --idle: #64748b;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 96px; }
+  a { color: var(--teal); }
+  code, .chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .topbar { position: sticky; top: 0; z-index: 5; background: rgba(15, 23, 42, .94); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .topbar .back { color: var(--muted); text-decoration: none; font-size: 14px; }
+  .topbar .back:hover { color: var(--text); }
+  .dots { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dots a { text-decoration: none; font-size: 13px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; }
+  .dots a.here { color: #111827; background: var(--purple); border-color: var(--purple); }
+  .dots a.running::after { content: " ●"; color: var(--amber); }
+  .dots a.here.running::after { color: #7c2d12; }
+  .live { margin-left: auto; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--idle); color: var(--muted); }
+  .live.on { border-color: var(--amber); color: var(--amber); }
+  .live.on::before { content: "● "; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+  section { margin-top: 40px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 0 14px; display: flex; align-items: center; gap: 10px; }
+  h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--panel-2); color: var(--text); font-size: 13px; letter-spacing: 0; }
+
+  .hero { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center; padding-top: 32px; }
+  .hero .badge { width: 140px; height: 140px; border-radius: 32px; background: linear-gradient(145deg, var(--panel-2), var(--panel)); border: 1px solid var(--border); display: grid; place-items: center; font-size: 78px; }
+  .hero .kicker { font-size: 14px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--purple); }
+  .hero h1 { margin: 6px 0 10px; font-size: clamp(30px, 5vw, 52px); line-height: 1.05; letter-spacing: -.01em; }
+  .hero .line { font-size: clamp(18px, 2.2vw, 24px); line-height: 1.45; margin: 0; max-width: 60ch; }
+  .skills { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .skills .lbl { font-size: 13px; color: var(--muted); margin-right: 4px; }
+  .skill { font-size: 14px; background: rgba(20, 184, 166, .12); color: var(--teal); border: 1px solid rgba(20, 184, 166, .4); border-radius: 999px; padding: 4px 12px; }
+
+  .story { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(170px, 1fr); gap: 0; overflow-x: auto; padding-bottom: 6px; }
+  .panel { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px 16px 18px; text-align: center; margin-right: 34px; }
+  .panel:last-child { margin-right: 0; }
+  .panel:not(:last-child)::after { content: "➜"; position: absolute; right: -28px; top: 50%; transform: translateY(-50%); font-size: 22px; color: var(--muted); }
+  .panel .step { position: absolute; top: 10px; left: 12px; font-size: 12px; color: var(--muted); font-weight: 700; }
+  .panel .pic { font-size: 60px; line-height: 1; }
+  .panel b { display: block; font-size: 18px; margin: 12px 0 6px; }
+  .panel p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.4; }
+  .panel.bad { border-color: rgba(248, 113, 113, .55); }
+  .panel.good { border-color: rgba(52, 211, 153, .55); }
+  .spoiler { position: relative; }
+  .hidden .spoiler > .veil { display: grid; }
+  .veil { display: none; position: absolute; inset: 0; border-radius: inherit; background: rgba(15, 23, 42, .82); backdrop-filter: blur(9px); place-items: center; text-align: center; color: var(--muted); font-size: 15px; font-weight: 600; cursor: pointer; }
+  .veil span { font-size: 38px; display: block; margin-bottom: 6px; }
+
+  .diagram { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 12px; position: relative; }
+  .diagram .scroll { overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  .fog { display: none; margin: 4px 8px 10px; padding: 10px 14px; border-radius: 10px; border: 1px dashed var(--amber); color: var(--amber); font-size: 16px; font-weight: 600; text-align: center; }
+  .hidden .fog { display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 8px 10px 4px; font-size: 14px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+  svg text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .node .body { fill: #0b1220; stroke-width: 3; }
+  .node .icon { font-size: 32px; text-anchor: middle; }
+  .node .label { fill: var(--text); font-size: 15px; font-weight: 700; text-anchor: middle; }
+  .node .sub { fill: var(--muted); font-size: 13px; text-anchor: middle; }
+  .node .tag rect { stroke-width: 1.5; }
+  .node .tag text { font-size: 13px; font-weight: 700; text-anchor: middle; }
+  .s-ok .body { stroke: var(--green); }       .s-ok .tag rect { fill: #0b1220; stroke: var(--green); }   .s-ok .tag text { fill: var(--green); }
+  .s-slow .body { stroke: var(--amber); }     .s-slow .tag rect { fill: #0b1220; stroke: var(--amber); } .s-slow .tag text { fill: var(--amber); }
+  .s-bad .body { stroke: var(--red); }        .s-bad .tag rect { fill: #0b1220; stroke: var(--red); }    .s-bad .tag text { fill: var(--red); }
+  .s-attack .body { stroke: var(--red); stroke-dasharray: 6 4; } .s-attack .tag rect { fill: #0b1220; stroke: var(--red); } .s-attack .tag text { fill: var(--red); }
+  .s-ai .body { stroke: var(--purple); }      .s-ai .tag rect { fill: #0b1220; stroke: var(--purple); }  .s-ai .tag text { fill: var(--purple); }
+  .s-guard .body { stroke: var(--teal); }     .s-guard .tag rect { fill: #0b1220; stroke: var(--teal); } .s-guard .tag text { fill: var(--teal); }
+  .s-idle .body { stroke: var(--idle); }
+  .pulse { fill: none; stroke: var(--red); stroke-width: 3; opacity: 0; }
+  .s-bad .pulse { animation: pulse 1.6s ease-out infinite; }
+  @keyframes pulse { 0% { opacity: .8; r: 36; } 100% { opacity: 0; r: 60; } }
+
+  .edge path { fill: none; stroke-width: 3; }
+  .e-ok path { stroke: var(--green); }  .e-ok .dot { fill: var(--green); }
+  .e-slow path { stroke: var(--amber); stroke-dasharray: 2 6; stroke-linecap: round; } .e-slow .dot { fill: var(--amber); }
+  .e-bad path, .e-attack path { stroke: var(--red); stroke-dasharray: 8 6; } .e-bad .dot, .e-attack .dot { fill: var(--red); }
+  .e-ai path { stroke: var(--purple); } .e-ai .dot { fill: var(--purple); }
+  .e-guard path { stroke: var(--teal); } .e-guard .dot { fill: var(--teal); }
+  .e-idle path { stroke: var(--idle); } .e-idle .dot { fill: var(--idle); }
+  .edge .elabel rect { fill: var(--bg); stroke: var(--border); }
+  .edge .elabel text { fill: var(--text); font-size: 13px; font-weight: 600; text-anchor: middle; }
+  .edge .stop { font-size: 22px; text-anchor: middle; }
+
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; }
+  .metric .top { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; }
+  .metric .top .ic { font-size: 28px; }
+  .metric .vals { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; font-size: 22px; font-weight: 800; flex-wrap: wrap; }
+  .metric .vals .before { color: var(--green); }
+  .metric .vals .arrow { color: var(--muted); font-size: 18px; }
+  .metric .vals .after.bad { color: var(--red); }
+  .metric .vals .after.good { color: var(--green); }
+  .metric .vals .after.warn { color: var(--amber); }
+  .metric svg { width: 100%; height: 54px; display: block; }
+
+  .mission { display: grid; gap: 12px; }
+  .mstep { display: grid; grid-template-columns: 56px 1fr; gap: 16px; align-items: start; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; }
+  .mstep .ic { width: 56px; height: 56px; border-radius: 14px; background: var(--panel-2); display: grid; place-items: center; font-size: 30px; position: relative; }
+  .mstep .ic .k { position: absolute; top: -8px; left: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--purple); color: #111827; font-size: 13px; font-weight: 800; display: grid; place-items: center; }
+  .mstep b { font-size: 18px; display: block; }
+  .mstep .where { color: var(--muted); font-size: 15px; margin-top: 4px; }
+  .mstep .who { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; border-radius: 6px; padding: 2px 8px; margin-bottom: 6px; background: var(--panel-2); color: var(--amber); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .chip { font-size: 13px; background: #0b1220; border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; color: var(--text); }
+
+  .answer { background: linear-gradient(180deg, rgba(167, 139, 250, .10), var(--panel)); border: 1px solid rgba(167, 139, 250, .5); border-radius: 16px; padding: 18px; display: grid; gap: 12px; border-radius: 16px; }
+  .fact { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; font-size: 17px; line-height: 1.4; }
+  .fact .ic { font-size: 28px; line-height: 1; }
+
+  .why { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; background: var(--panel); border: 1px solid var(--teal); border-radius: 16px; padding: 20px 22px; }
+  .why .ic { font-size: 56px; }
+  .why p { margin: 0; font-size: 20px; line-height: 1.45; }
+  .why p + p { margin-top: 8px; font-size: 16px; color: var(--muted); }
+
+  .words { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .word { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; display: grid; grid-template-columns: 42px 1fr; gap: 12px; align-items: center; }
+  .word .ic { font-size: 30px; }
+  .word b { font-size: 16px; display: block; }
+  .word span { font-size: 14px; color: var(--muted); line-height: 1.35; }
+
+  .actionbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: rgba(15, 23, 42, .96); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .actionbar button, .actionbar a { font: inherit; font-size: 15px; font-weight: 700; border-radius: 10px; padding: 10px 16px; cursor: pointer; text-decoration: none; border: 1px solid var(--border); background: transparent; color: var(--text); }
+  .actionbar a:hover, .actionbar button:hover { border-color: var(--teal); }
+  .actionbar .start { background: var(--amber); border-color: var(--amber); color: #111827; }
+  .actionbar .start:hover { border-color: #fff; }
+  .actionbar .start.running { background: var(--panel-2); border-color: var(--amber); color: var(--amber); }
+  .actionbar .reveal { border-color: var(--purple); color: var(--purple); }
+  .actionbar .spacer { flex: 1; max-width: 60px; }
+  .actionbar button:disabled { opacity: .6; cursor: wait; }
+  .note { display: none; max-width: 1180px; margin: 16px auto 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--amber); color: var(--amber); background: rgba(245, 158, 11, .08); font-size: 14px; }
+  .note.show { display: block; }
+  .keys { text-align: center; color: var(--muted); font-size: 12px; margin-top: 40px; }
+  .keys kbd { border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+
+  @media (max-width: 720px) {
+    .hero { grid-template-columns: 1fr; gap: 14px; }
+    .hero .badge { width: 88px; height: 88px; font-size: 50px; border-radius: 22px; }
+    .why { grid-template-columns: 1fr; }
+    .actionbar .spacer { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .s-bad .pulse { animation: none; } html { scroll-behavior: auto; } }
+</style>
+</head>
+<body class="hidden">
+<div class="topbar">
+  <a class="back" href="/">← Controls</a>
+  <nav class="dots" id="dots"></nav>
+  <span class="live" id="live">Not running</span>
+</div>
+<div class="note" id="paused-note">⏸ Traffic is paused. Press <b>Resume traffic</b> on the <a href="/">controls page</a>, or Splunk will show nothing for this act.</div>
+<main id="page"></main>
+<div class="keys"><kbd>←</kbd> <kbd>→</kbd> previous / next act · <kbd>A</kbd> show / hide the answer</div>
+<div class="actionbar">
+  <a id="prev" href="#">◀ Previous</a>
+  <span class="spacer"></span>
+  <button class="reveal" id="reveal" onclick="toggleAnswer()">👀 Show the answer</button>
+  <button class="start" id="start" onclick="startAct()">▶ Start this act</button>
+  <button id="reset" onclick="resetAll()" title="Turn every failure off">⟲ Reset to healthy</button>
+  <span class="spacer"></span>
+  <a id="next" href="#">Next ▶</a>
+</div>
+
+<script>
+/* ---------- Content: one entry per SCENARIOS key in app.py ----------
+   Node positions are grid cells: col 0–5, row 0–2.
+   status: ok | slow | bad | attack | ai | guard | idle
+   `hint` = how a node/edge looks while the answer is hidden (default: idle, no tag).
+   `answerOnly` nodes appear only after "Show the answer".
+   Story panels with `spoiler: true` are blurred until the answer is shown. */
+const ACTS = {
+  baseline: {
+    icon: '💚', kicker: 'Start here · Baseline', title: 'Everything is healthy',
+    line: 'Shoppers pay. Money moves from the shopper, through TukTukPay, to the bank. Nothing is broken.',
+    skills: ['Service map', 'Trace view'],
+    noAnswer: true,
+    story: [
+      { icon: '🛒', head: 'Shopper pays', text: 'A customer buys a flight or a phone.', tone: 'good' },
+      { icon: '⚡', head: 'Fast check', text: 'Fraud check and bank answer in less than a second.', tone: 'good' },
+      { icon: '✅', head: 'Approved', text: 'Money is recorded. The shop gets a message.', tone: 'good' },
+      { icon: '🔭', head: 'Splunk sees all', text: 'Every payment is one trace, from start to end.', tone: 'good' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'shop', col: 0, row: 0, icon: '🛒', label: 'Shopper', sub: 'pays online', status: 'ok', hint: { status: 'ok' } },
+        { id: 'co', col: 1, row: 0, icon: '🚪', label: 'checkout-api', sub: 'front door', status: 'ok', hint: { status: 'ok' } },
+        { id: 'risk', col: 2, row: 0, icon: '🛡️', label: 'risk-engine', sub: 'fraud check', status: 'ok', hint: { status: 'ok' } },
+        { id: 'router', col: 3, row: 0, icon: '🔀', label: 'payment-router', sub: 'picks the bank', status: 'ok', hint: { status: 'ok' } },
+        { id: 'bank', col: 4, row: 0, icon: '🏦', label: 'acquirer-sim', sub: 'the bank', status: 'ok', hint: { status: 'ok' } },
+        { id: 'ledger', col: 1, row: 1, icon: '📒', label: 'ledger', sub: 'records the money', status: 'ok', hint: { status: 'ok' } },
+        { id: 'wh', col: 2, row: 1, icon: '📨', label: 'webhook-dispatcher', sub: 'tells the shop', status: 'ok', hint: { status: 'ok' } },
+        { id: 'merchant', col: 3, row: 1, icon: '🏬', label: 'merchant', sub: 'the shop', status: 'ok', hint: { status: 'ok' } },
+      ],
+      edges: [
+        ['shop', 'co', 'ok'], ['co', 'risk', 'ok'], ['risk', 'router', 'ok'], ['router', 'bank', 'ok'],
+        ['co', 'ledger', 'ok'], ['ledger', 'wh', 'ok'], ['wh', 'merchant', 'ok'],
+      ].map(([a, b, s]) => ({ from: a, to: b, status: s, hint: { status: s } })),
+    },
+    metrics: [
+      { icon: '✅', label: 'Approval rate', before: 'high', after: 'high', trend: 'flat', tone: 'good' },
+      { icon: '⏱️', label: 'Payment wait time', before: 'fast', after: 'fast', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { icon: '🗺️', title: 'Open the service map', where: 'APM → Service Map. Pick your environment.', chips: ['deployment.environment'] },
+      { icon: '🧵', title: 'Open one payment trace', where: 'Click checkout-api → Traces → any POST /v1/payments.', chips: ['POST /v1/payments'] },
+      { icon: '👀', title: 'Remember what "normal" looks like', where: 'Green map, low latency, few errors. You will compare with this later.' },
+    ],
+    why: ['First learn what healthy looks like. Then you can see what changed.', 'Every act after this breaks one part of the payment path.'],
+    words: [
+      { icon: '🏦', word: 'Acquirer', meaning: 'The bank that accepts card payments for the shop.' },
+      { icon: '🧵', word: 'Trace', meaning: 'The full path of one payment through every service.' },
+      { icon: '🗺️', word: 'Service map', meaning: 'Picture of all services and how they talk.' },
+    ],
+  },
+
+  act1: {
+    icon: '💳', kicker: 'Act 1', title: 'The one-in-ten-thousand decline',
+    line: 'It is the 11.11 sale. Traffic is 10× bigger. Most payments are fine, but some Thai card payments become slow and then fail.',
+    skills: ['Tag Spotlight', 'Trace view', 'Trace Analyzer', 'AI Assistant'],
+    story: [
+      { icon: '🎉', head: '11.11 sale', text: '10× more shoppers at the same time.' },
+      { icon: '😟', head: 'Some payments fail', text: 'Only a very small group. Everyone else is fine.', tone: 'bad' },
+      { icon: '🥶', head: 'One bank freezes', text: 'KBank does not answer for cards starting 457173.', spoiler: true, tone: 'bad' },
+      { icon: '↪️', head: 'Plan B bank', text: 'After 2.5 s the router tries UOB in Singapore.', spoiler: true },
+      { icon: '❌', head: 'Plan B says no', text: 'UOB declines many Thai cards: "do_not_honor".', spoiler: true, tone: 'bad' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'shop', col: 0, row: 0, icon: '🛒', label: 'Shoppers', sub: '11.11 sale', status: 'slow', tag: '💳 BIN 457173 · THB', hint: { status: 'slow', tag: '🎉 ×10 traffic' } },
+        { id: 'co', col: 1, row: 0, icon: '🚪', label: 'checkout-api', sub: 'front door', status: 'slow', tag: 'thai-airways' },
+        { id: 'risk', col: 2, row: 0, icon: '🛡️', label: 'risk-engine', sub: 'fraud check', status: 'ok' },
+        { id: 'router', col: 3, row: 0, icon: '🔀', label: 'payment-router', sub: 'picks the bank', status: 'slow', tag: '⏱ waits 2.5 s' },
+        { id: 'kbank', col: 4, row: 0, icon: '🏦', label: 'acq-kbank', sub: 'KBank · Thailand', status: 'bad', tag: '🥶 hangs 3.2 s' },
+        { id: 'uob', col: 4, row: 1, icon: '🏦', label: 'acq-uob', sub: 'UOB · Singapore (backup)', status: 'slow', tag: '❌ do_not_honor', answerOnly: true },
+      ],
+      edges: [
+        { from: 'shop', to: 'co', status: 'slow', hint: { status: 'slow' } },
+        { from: 'co', to: 'risk', status: 'ok' },
+        { from: 'risk', to: 'router', status: 'ok' },
+        { from: 'router', to: 'kbank', status: 'bad', label: 'timeout' },
+        { from: 'router', to: 'uob', status: 'slow', label: 'failover' },
+      ],
+    },
+    metrics: [
+      { icon: '🎉', label: 'Traffic', before: '×1', after: '×10', trend: 'up', tone: 'warn' },
+      { icon: '⏱️', label: 'Payment wait time (p90)', before: 'fast', after: '≈ 2.6 s', trend: 'up', tone: 'bad' },
+      { icon: '❌', label: 'Declines for some Thai cards', before: 'low', after: 'high', trend: 'up', tone: 'bad' },
+    ],
+    mission: [
+      { icon: '🏷️', title: 'Make the business tags searchable', where: 'Settings → APM MetricSets → add these tags.', chips: ['merchant.id', 'payment.card.bin', 'payment.acquirer', 'payment.currency'] },
+      { icon: '🔦', title: 'Find the red group', where: 'APM → checkout-api → Tag Spotlight. Sort by error rate and latency.' },
+      { icon: '🧵', title: 'Open one slow payment', where: 'Look inside payment-router. How many bank calls? Which one waited?', chips: ['route.attempts', 'route.failover'] },
+      { icon: '🤖', title: 'Ask the AI to check you', where: 'AI Assistant: "Why is p90 latency high for checkout-api in the last 15 minutes?"' },
+    ],
+    answer: [
+      { icon: '🏬', text: 'Merchant: thai-airways', chips: ['merchant.id=thai-airways'] },
+      { icon: '💳', text: 'Card group: Thai cards whose number starts 457173, paid in THB', chips: ['payment.card.bin=457173'] },
+      { icon: '🥶', text: 'KBank hangs. The router waits 2.5 s, then fails over to UOB.', chips: ['payment.acquirer: acq-kbank → acq-uob', 'route.failover=true'] },
+      { icon: '❌', text: 'UOB declines many of these domestic Thai cards.', chips: ['do_not_honor'] },
+    ],
+    why: ['A very rare failure hides inside millions of good payments. You can only find it if every trace is kept, even at 10× or 30× traffic.', 'Splunk keeps 100% of traces, so the failing Thai card payments are still there an hour later.'],
+    words: [
+      { icon: '💳', word: 'BIN', meaning: 'The first 6 digits of a card. It tells which bank issued it.' },
+      { icon: '↪️', word: 'Failover', meaning: 'If bank A does not answer, try bank B.' },
+      { icon: '🔦', word: 'Tag Spotlight', meaning: 'Splits errors by merchant, card, bank… and shows the red one.' },
+    ],
+  },
+
+  act2: {
+    icon: '🧠', kicker: 'Act 2', title: 'The model that drifted',
+    line: 'The fraud team tests a new AI fraud model on 1 of every 5 payments. Approvals start to drop, but only for some payments.',
+    skills: ['Charts', 'Tag Spotlight', 'AlwaysOn Profiling', 'AI Troubleshooting Agent'],
+    story: [
+      { icon: '🧪', head: 'New model test', text: 'Model v3 checks 20% of payments. v2 checks the rest.' },
+      { icon: '📉', head: 'Approvals drop', text: 'More payments get "NO". Merchants lose sales.', tone: 'bad' },
+      { icon: '🔥', head: 'v3 is heavy', text: 'Each check takes ≈ 200 ms instead of ≈ 1 ms.', spoiler: true, tone: 'bad' },
+      { icon: '🚫', head: 'Wrong "NO"', text: 'v3 blocks wallet payments in Indonesia (IDR) and the Philippines (PHP).', spoiler: true, tone: 'bad' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'shop', col: 0, row: 0, icon: '👛', label: 'Shoppers', sub: 'cards + wallets', status: 'slow', tag: '👛 wallet · IDR / PHP', hint: { status: 'slow', tag: '😟 more declines' } },
+        { id: 'co', col: 1, row: 0, icon: '🚪', label: 'checkout-api', sub: 'front door', status: 'ok' },
+        { id: 'risk', col: 2, row: 0, icon: '🛡️', label: 'risk-engine', sub: 'fraud check', status: 'slow', tag: '🔀 80% / 20%' },
+        { id: 'v2', col: 3, row: 0, icon: '🙂', label: 'model v2', sub: 'old model · 80%', status: 'ok', tag: '⚡ ≈ 1 ms' },
+        { id: 'v3', col: 3, row: 1, icon: '🥵', label: 'model v3', sub: 'new model · 20%', status: 'bad', tag: '🔥 ≈ 200 ms CPU' },
+        { id: 'bank', col: 4, row: 0, icon: '🏦', label: 'bank', sub: 'approves', status: 'ok' },
+        { id: 'deny', col: 4, row: 1, icon: '🚫', label: 'Declined', sub: 'wallet_geo_risk_v3', status: 'bad', answerOnly: true },
+      ],
+      edges: [
+        { from: 'shop', to: 'co', status: 'ok' },
+        { from: 'co', to: 'risk', status: 'ok' },
+        { from: 'risk', to: 'v2', status: 'ok', label: '80%' },
+        { from: 'risk', to: 'v3', status: 'slow', label: '20%' },
+        { from: 'v2', to: 'bank', status: 'ok' },
+        { from: 'v3', to: 'deny', status: 'bad', label: 'NO' },
+      ],
+    },
+    metrics: [
+      { icon: '✅', label: 'Approval rate', before: 'normal', after: 'lower', trend: 'down', tone: 'bad' },
+      { icon: '⏱️', label: 'Fraud check time', before: 'fast', after: 'slower', trend: 'up', tone: 'bad' },
+      { icon: '🔥', label: 'risk-engine CPU', before: 'low', after: 'higher', trend: 'up', tone: 'warn' },
+    ],
+    mission: [
+      { icon: '📊', title: 'Chart the business result', where: 'Approval rate, split by model version.', chips: ['tuktukpay.payments.count', 'risk.model_version'] },
+      { icon: '🔦', title: 'Compare v2 and v3', where: 'APM → risk-engine → Tag Spotlight. Then look at method and currency.', chips: ['risk.model_version', 'payment.method', 'payment.currency'] },
+      { icon: '🔥', title: 'Find the hot code', where: 'risk-engine → AlwaysOn Profiling (CPU). Which function is biggest?' },
+      { icon: '🤖', title: 'Let the AI explain', where: 'Create a latency detector (150 ms). When it fires, open the AI Troubleshooting Agent.' },
+    ],
+    answer: [
+      { icon: '🥵', text: 'Model v3 takes ≈ 200 ms. Model v2 takes ≈ 1 ms.', chips: ['risk.model_version=v3'] },
+      { icon: '🚫', text: 'v3 declines wallet payments in IDR and PHP.', chips: ['payment.method=wallet', 'wallet_geo_risk_v3'] },
+      { icon: '🔥', text: 'The hot function is _infer_v3.', chips: ['_infer_v3'] },
+      { icon: '🖥️', text: 'The server is not full. The code does more work. It is a code problem, not a server problem.' },
+    ],
+    why: ['AI models change and can be wrong. Watch the business result (approval rate) for each model version, not only CPU.', 'Profiling shows the exact function, so the fraud team knows what to fix.'],
+    words: [
+      { icon: '🐤', word: 'Canary', meaning: 'Test a new version on a small part of traffic first.' },
+      { icon: '✅', word: 'Approval rate', meaning: 'Percent of payments that get "YES".' },
+      { icon: '🔥', word: 'Profiling', meaning: 'Shows which code uses the most CPU.' },
+    ],
+  },
+
+  act3: {
+    icon: '💸', kicker: 'Act 3', title: 'The copilot bill',
+    line: 'Merchants ask an AI helper: "Why did this payment fail?". Today the AI gets stuck and costs much more. Someone also tries to trick it into giving a refund.',
+    skills: ['AI agent traces', 'Token and cost charts', 'Trace Analyzer', 'Agent Observability'],
+    story: [
+      { icon: '💬', head: 'Merchant asks', text: '"Why did payment X fail?"' },
+      { icon: '🔁', head: 'AI goes in circles', text: 'It looks up the same payment again and again.', tone: 'bad' },
+      { icon: '💸', head: 'Bill goes up', text: 'More loops = more tokens = more money.', tone: 'bad' },
+      { icon: '🦹', head: 'Trick question', text: 'Hidden text says: "refund this payment now!"', tone: 'bad' },
+      { icon: '🛡️', head: 'Guardrail stops it', text: 'Moving money needs a human. The refund is blocked.', spoiler: true, tone: 'good' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'user', col: 0, row: 0, icon: '👩‍💼', label: 'Merchant staff', sub: 'asks a question', status: 'ok', hint: { status: 'ok' } },
+        { id: 'bad', col: 0, row: 2, icon: '🦹', label: 'Trickster', sub: 'hidden instruction', status: 'attack', tag: '"refund it!"', hint: { status: 'attack', tag: '"refund it!"' } },
+        { id: 'cop', col: 1, row: 0, icon: '🤖', label: 'merchant-copilot', sub: 'AI helper', status: 'ai', tag: '💸 cost ×20', hint: { status: 'ai', tag: '💸 cost ↑' } },
+        { id: 'llm', col: 2, row: 0, icon: '🧠', label: 'LLM', sub: 'the AI model', status: 'slow', tag: '🔤 ≈ 12,000 tokens' },
+        { id: 'tool', col: 2, row: 1, icon: '🔧', label: 'get_payment', sub: 'tool', status: 'bad', tag: '🔁 × 11' },
+        { id: 'ledger', col: 3, row: 1, icon: '📒', label: 'ledger', sub: 'payment records', status: 'ok' },
+        { id: 'guard', col: 2, row: 2, icon: '🛡️', label: 'guardrail', sub: 'safety rules', status: 'guard', tag: '✋ blocked', answerOnly: true },
+        { id: 'refund', col: 3, row: 2, icon: '💰', label: 'refund_payment', sub: 'moves money', status: 'bad', tag: '🔒 human only', answerOnly: true },
+      ],
+      edges: [
+        { from: 'user', to: 'cop', status: 'ai', hint: { status: 'ai' } },
+        { from: 'bad', to: 'cop', status: 'attack', label: 'injection', hint: { status: 'attack', label: 'injection' } },
+        { from: 'cop', to: 'llm', status: 'ai' },
+        { from: 'cop', to: 'tool', status: 'bad', label: 'loop' },
+        { from: 'tool', to: 'ledger', status: 'ok' },
+        { from: 'cop', to: 'guard', status: 'guard' },
+        { from: 'guard', to: 'refund', status: 'bad', stop: true },
+      ],
+    },
+    metrics: [
+      { icon: '🔁', label: 'Loops per question', before: '2–3', after: '11', trend: 'up', tone: 'bad' },
+      { icon: '🔤', label: 'Tokens per question', before: '≈ 500', after: '≈ 12,000', trend: 'up', tone: 'bad' },
+      { icon: '💸', label: 'Cost per question', before: '×1', after: '×20', trend: 'up', tone: 'bad' },
+      { icon: '🛡️', label: 'Refunds that got through', before: '0', after: '0', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { icon: '🧵', title: 'Open one slow AI question', where: 'APM → merchant-copilot → Traces → slow POST /v1/ask. Count the chat and tool steps.', chips: ['invoke_agent', 'chat', 'execute_tool get_payment'] },
+      { icon: '📈', title: 'Chart tokens and cost', where: 'By token type and by merchant. When did it jump?', chips: ['gen_ai.client.token.usage', 'tuktukpay.copilot.cost_usd'] },
+      { icon: '🛡️', title: 'Find the blocked trick', where: 'Trace Analyzer on merchant-copilot.', chips: ['guardrail.verdict=block', 'security.prompt_injection.suspected=true'] },
+      { icon: '🔗', title: 'See the link', where: 'The AI step and the ledger call are in the same trace.' },
+    ],
+    answer: [
+      { icon: '🔁', text: 'Loops jump from 2–3 to 11 per question.', chips: ['tuktukpay.copilot.iterations'] },
+      { icon: '🔤', text: 'Input tokens jump from ≈ 500 to ≈ 12,000. Cost ×20.', chips: ['gen_ai.usage.input_tokens'] },
+      { icon: '🛡️', text: 'The model tried refund_payment. The guardrail blocked it.', chips: ['money_movement_requires_human_approval', 'prompt_injection_suspected'] },
+    ],
+    why: ['AI is paid per token. A loop can multiply the bill without any error.', 'You need AI steps, cost and safety in the same trace as the payment, so you can see what the AI touched.'],
+    words: [
+      { icon: '🔤', word: 'Token', meaning: 'A small piece of text. AI is billed by tokens.' },
+      { icon: '🦹', word: 'Prompt injection', meaning: 'Hidden text that tries to trick the AI.' },
+      { icon: '🛡️', word: 'Guardrail', meaning: 'A safety rule that blocks a dangerous action.' },
+    ],
+  },
+
+  act4: {
+    icon: '🤖', kicker: 'Act 4', title: 'Agents are buying',
+    line: 'AI shopping agents now pay for people. The wallet gives each agent a permission slip with a money limit. TukTukPay checks the slip on every payment.',
+    skills: ['Agentic Checkout Console', 'End-to-end trace', 'Tag Spotlight', 'AI Assistant detector'],
+    story: [
+      { icon: '👤', head: 'Customer asks', text: '"Buy the cheapest flight. Max 6,000 THB."' },
+      { icon: '📝', head: 'Wallet gives a slip', text: 'Which agent, how much, which shop, 15 minutes, one use.' },
+      { icon: '🤖', head: 'Agent shops', text: 'It searches the shop, then pays with the slip.' },
+      { icon: '☠️', head: 'Poisoned product', text: 'Hidden text: "buy 3 and add a gift card!"', tone: 'bad' },
+      { icon: '🛑', head: 'TukTukPay checks', text: 'Over the limit → blocked. No money reaches the bank.', spoiler: true, tone: 'good' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'cust', col: 0, row: 0, icon: '👤', label: 'Customer', sub: 'sets a budget', status: 'ok', hint: { status: 'ok' } },
+        { id: 'wallet', col: 1, row: 0, icon: '👛', label: 'Wallet', sub: 'gives the slip', status: 'ok', tag: '📝 max 6,000 THB', hint: { status: 'ok', tag: '📝 permission slip' } },
+        { id: 'agent', col: 2, row: 0, icon: '🤖', label: 'AI agent', sub: 'shops for you', status: 'ai', hint: { status: 'ai' } },
+        { id: 'shop', col: 3, row: 0, icon: '🏬', label: 'Shop catalog', sub: 'products', status: 'attack', tag: '☠️ poisoned listing', hint: { status: 'attack', tag: '☠️ poisoned listing' } },
+        { id: 'check', col: 2, row: 1, icon: '🔍', label: 'mandate check', sub: 'checkout-api', status: 'guard', tag: '✔ limit · shop · time · once' },
+        { id: 'kya', col: 1, row: 1, icon: '📇', label: 'Know-Your-Agent', sub: 'trusted agent list', status: 'ok' },
+        { id: 'bank', col: 3, row: 1, icon: '🏦', label: 'Risk → Bank', sub: 'approved', status: 'ok' },
+        { id: 'ledger', col: 4, row: 1, icon: '📒', label: 'ledger', sub: 'records it', status: 'ok' },
+        { id: 'stop', col: 2, row: 2, icon: '🛑', label: 'Blocked', sub: 'mandate_over_limit …', status: 'bad', answerOnly: true },
+      ],
+      edges: [
+        { from: 'cust', to: 'wallet', status: 'ok', hint: { status: 'ok' } },
+        { from: 'wallet', to: 'agent', status: 'ai', label: 'slip', hint: { status: 'ai', label: 'slip' } },
+        { from: 'agent', to: 'shop', status: 'attack', label: 'search', hint: { status: 'ai', label: 'search' } },
+        { from: 'agent', to: 'check', status: 'ai', label: 'pay' },
+        { from: 'check', to: 'kya', status: 'guard' },
+        { from: 'check', to: 'bank', status: 'ok', label: 'OK' },
+        { from: 'bank', to: 'ledger', status: 'ok' },
+        { from: 'check', to: 'stop', status: 'bad', label: 'too much', stop: true },
+      ],
+    },
+    metrics: [
+      { icon: '🤖', label: 'Payments made by agents', before: '≈ 0%', after: '≈ 25%', trend: 'up', tone: 'warn' },
+      { icon: '🛑', label: 'Agent payments blocked at the slip check', before: '≈ 0%', after: '≈ 15%', trend: 'up', tone: 'warn' },
+      { icon: '🏦', label: 'Blocked payments that reached a bank', before: '0', after: '0', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { icon: '🖥️', title: 'Run one agent purchase', where: 'Agentic Checkout Console (port 8087) → "Cheapest BKK→SIN flight" → Pre-approve and run the agent.' },
+      { icon: '🧵', title: 'Follow the money in one trace', where: 'Wallet → agent → shop → mandate check → risk → bank → ledger → webhook.', chips: ['amp.verify_mandate', 'mandate.verdict'] },
+      { icon: '🦹', title: 'Press the attack buttons', where: 'Overspend, poisoned listing, replay, forged token, wrong merchant, expired… Where is each one stopped?' },
+      { icon: '🔦', title: 'See the whole fleet', where: 'checkout-api → Tag Spotlight.', chips: ['payment.initiator', 'agent.protocol', 'agent.verified', 'mandate.block_reason'] },
+    ],
+    answer: [
+      { icon: '🤖', text: 'About 25% of payments come from agents.', chips: ['payment.initiator=agent'] },
+      { icon: '✅', text: 'Verified AMP agents are approved about as often as humans. Unverified agents get many risk declines.', chips: ['agent.verified', 'bot_like_pattern'] },
+      { icon: '🛑', text: 'About 15% of AMP agent payments are blocked at the slip check. Zero reach a bank.', chips: ['mandate_over_limit', 'mandate_replay', 'mandate_invalid_signature', 'mandate_expired', 'mandate_merchant_not_allowed'] },
+      { icon: '☠️', text: 'Poisoned listing: flagged at the agent, stopped by the money limit.', chips: ['security.prompt_injection.suspected=true', 'mandate_over_limit'] },
+    ],
+    why: ['Soon robots will pay, not only people. The regulator (MAS) will ask: who allowed it, which agent, which checks?', 'One trace from wallet to bank is that proof, for every agent payment.'],
+    words: [
+      { icon: '🤖', word: 'AI agent', meaning: 'Software that shops and pays for a person.' },
+      { icon: '📝', word: 'Mandate', meaning: 'A permission slip: which agent, max amount, which shop, until when.' },
+      { icon: '📇', word: 'KYA', meaning: 'Know-Your-Agent: the list of trusted agents.' },
+    ],
+  },
+
+  act4b: {
+    icon: '📇', kicker: 'Act 4b', title: 'The agent list goes down',
+    line: 'The Know-Your-Agent service stops working. TukTukPay cannot check agents, so it blocks every agent payment to stay safe.',
+    skills: ['AI Troubleshooting Agent', 'Tag Spotlight', 'Trace view'],
+    story: [
+      { icon: '🤖', head: 'Agents pay', text: 'A quarter of payments come from AI agents.' },
+      { icon: '💥', head: 'Agent list is down', text: 'The trusted-agent check stops answering.', spoiler: true, tone: 'bad' },
+      { icon: '🔒', head: 'Fail closed', text: 'No check = no payment. Every agent payment is blocked.', tone: 'bad' },
+      { icon: '🤔', head: 'Hard choice', text: 'Lose the sales? Or lose the safety?' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'agent', col: 0, row: 0, icon: '🤖', label: 'AI agents', sub: 'AMP payments', status: 'bad', tag: '😟 all blocked', hint: { status: 'bad', tag: '😟 all blocked' } },
+        { id: 'check', col: 1, row: 0, icon: '🔍', label: 'mandate check', sub: 'checkout-api', status: 'slow', tag: '🔒 fail closed' },
+        { id: 'kya', col: 1, row: 1, icon: '📇', label: 'Know-Your-Agent', sub: 'wallet-sim', status: 'bad', tag: '💥 503' },
+        { id: 'stop', col: 2, row: 0, icon: '🛑', label: 'Blocked', sub: 'mandate_kya_unavailable', status: 'bad', answerOnly: true },
+        { id: 'human', col: 0, row: 2, icon: '👤', label: 'Human shoppers', sub: 'normal checkout', status: 'ok', hint: { status: 'ok' } },
+        { id: 'bank', col: 2, row: 2, icon: '🏦', label: 'bank', sub: 'still approves', status: 'ok', hint: { status: 'ok' } },
+      ],
+      edges: [
+        { from: 'agent', to: 'check', status: 'ai' },
+        { from: 'check', to: 'kya', status: 'bad', label: 'ask' },
+        { from: 'check', to: 'stop', status: 'bad', stop: true },
+        { from: 'human', to: 'bank', status: 'ok', label: 'works', hint: { status: 'ok', label: 'works' } },
+      ],
+    },
+    metrics: [
+      { icon: '🛑', label: 'Agent (AMP) payments blocked', before: 'few', after: 'all', trend: 'up', tone: 'bad' },
+      { icon: '👤', label: 'Human payments', before: 'OK', after: 'OK', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { icon: '🚨', title: 'Start from the alert', where: 'Open the mandate-block alert → AI Troubleshooting Agent.' },
+      { icon: '🔦', title: 'Why are they blocked?', where: 'checkout-api → Tag Spotlight.', chips: ['mandate.block_reason'] },
+      { icon: '🧵', title: 'Find the broken call', where: 'Open one blocked trace. Which call returns an error?' },
+      { icon: '🗣️', title: 'Discuss', where: 'Should 2C2P fail closed (lose sales) or fail open (lose safety)?' },
+    ],
+    answer: [
+      { icon: '📇', text: 'The Know-Your-Agent lookup returns 503.', chips: ['wallet-sim GET /v1/kya/{agent}'] },
+      { icon: '🛑', text: 'Every AMP agent payment is blocked.', chips: ['mandate_kya_unavailable'] },
+      { icon: '👤', text: 'Human payments are not affected.' },
+    ],
+    why: ['AI safety services are also dependencies. If they break, payments break.', 'Watch them like you watch a bank connection.'],
+    words: [
+      { icon: '🔒', word: 'Fail closed', meaning: 'If the check breaks, say NO to everything.' },
+      { icon: '🔓', word: 'Fail open', meaning: 'If the check breaks, say YES without checking.' },
+      { icon: '🔗', word: 'Dependency', meaning: 'Another service you need in order to work.' },
+    ],
+  },
+
+  act5: {
+    icon: '🙋', kicker: 'Act 5', title: 'Ask, don\'t dig',
+    line: 'Two problems at the same time. Half the team may only click the normal screens. The other half may only ask the AI. Who finds the cause first?',
+    skills: ['AI Assistant', 'AI Troubleshooting Agent', 'Database Query Performance', 'Tag Spotlight'],
+    story: [
+      { icon: '⏳', head: 'Payments slower', text: 'The banks are fine, but checkout is slow.', tone: 'bad' },
+      { icon: '📭', head: 'A shop is missing news', text: 'One merchant does not get "payment done" messages.', tone: 'bad' },
+      { icon: '🐢', head: 'Database is jammed', text: 'Only 2 connections, and every save is slow.', spoiler: true, tone: 'bad' },
+      { icon: '🔁', head: 'Messages retry', text: '40% fail, retried 3×, some go to the dead-letter box.', spoiler: true },
+      { icon: '🏁', head: 'Race!', text: 'Clicking team vs asking-the-AI team.' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'shop', col: 0, row: 0, icon: '🛒', label: 'Shoppers', sub: 'pay online', status: 'slow', hint: { status: 'slow', tag: '⏳ slower' }, tag: '⏳ slower' },
+        { id: 'co', col: 1, row: 0, icon: '🚪', label: 'checkout-api', sub: 'front door', status: 'slow' },
+        { id: 'bank', col: 2, row: 0, icon: '🏦', label: 'router → bank', sub: 'fine', status: 'ok' },
+        { id: 'ledger', col: 1, row: 1, icon: '📒', label: 'ledger', sub: 'records money', status: 'bad', tag: '🐢 pool = 2' },
+        { id: 'db', col: 0, row: 1, icon: '🐘', label: 'Postgres', sub: 'database', status: 'slow', tag: '+250 ms INSERT' },
+        { id: 'wh', col: 2, row: 1, icon: '📨', label: 'webhook-dispatcher', sub: 'tells the shop', status: 'slow', tag: '🔁 retry ×3' },
+        { id: 'm', col: 3, row: 1, icon: '🏬', label: 'lazada-th', sub: 'merchant', status: 'bad', tag: '❌ 40% errors', hint: { status: 'bad', tag: '📭 missing messages' } },
+        { id: 'dlq', col: 3, row: 2, icon: '🗑️', label: 'dead-letter', sub: 'payments.events.dlq', status: 'slow', answerOnly: true },
+      ],
+      edges: [
+        { from: 'shop', to: 'co', status: 'slow', hint: { status: 'slow' } },
+        { from: 'co', to: 'bank', status: 'ok' },
+        { from: 'co', to: 'ledger', status: 'slow', label: 'waits' },
+        { from: 'ledger', to: 'db', status: 'bad' },
+        { from: 'ledger', to: 'wh', status: 'ok' },
+        { from: 'wh', to: 'm', status: 'bad', label: '500' },
+        { from: 'wh', to: 'dlq', status: 'slow', label: 'give up' },
+      ],
+    },
+    metrics: [
+      { icon: '⏱️', label: 'Checkout wait time', before: 'fast', after: 'slower', trend: 'up', tone: 'bad' },
+      { icon: '📨', label: 'Failed webhook deliveries', before: 'none', after: 'many', trend: 'up', tone: 'bad' },
+      { icon: '🏦', label: 'Bank problems', before: 'none', after: 'none', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { who: 'Team AI', icon: '🤖', title: 'Start from the alert', where: 'checkout-api latency alert → AI Troubleshooting Agent. Read the suspected causes.' },
+      { who: 'Team AI', icon: '💬', title: 'Ask in plain words', where: '"Which database queries in ledger got slower in the last 15 minutes?" · "Which merchant has the most failed webhook deliveries?"' },
+      { who: 'Team Click', icon: '🐘', title: 'Database Query Performance', where: 'ledger → which statement got slow? Check the pool on the span.', chips: ['db.pool.wait_ms', 'db.pool.max'] },
+      { who: 'Team Click', icon: '🔦', title: 'Which merchant?', where: 'webhook-dispatcher → Tag Spotlight. Chart deliveries by outcome.', chips: ['merchant.id', 'webhook.attempt', 'tuktukpay.webhooks.deliveries'] },
+    ],
+    answer: [
+      { icon: '🐢', text: 'Ledger pool is only 2 connections. INSERT is ≈ 250 ms slower (pg_sleep). Requests queue.', chips: ['INSERT INTO payments', 'db.pool.max=2'] },
+      { icon: '🏬', text: 'lazada-th webhooks fail 40% of the time.', chips: ['merchant.id=lazada-th'] },
+      { icon: '🔁', text: 'Retried 3× with back-off. Some go to the dead-letter queue. The retries are inside the original payment trace.', chips: ['payments.events.dlq'] },
+    ],
+    why: ['During a festival, every minute counts. Asking in plain words can be faster than clicking through ten screens.', 'The AI works on the same full data, so its answer can be checked against the traces.'],
+    words: [
+      { icon: '🔌', word: 'Connection pool', meaning: 'A fixed number of "phone lines" to the database.' },
+      { icon: '📨', word: 'Webhook', meaning: 'A message to the shop: "payment done".' },
+      { icon: '🗑️', word: 'Dead-letter queue', meaning: 'A box for messages that failed too many times.' },
+    ],
+  },
+};
+
+/* ---------- Rendering ---------- */
+const $ = (id) => document.getElementById(id);
+const NAME = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || 'baseline');
+const ORDER = Object.keys(ACTS);
+const A = ACTS[NAME];
+let hidden = !(A && A.noAnswer) && location.hash !== '#answer';
+const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const chips = (list) => list && list.length ? `<div class="chips">${list.map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>` : '';
+
+function renderDots() {
+  const short = { baseline: 'Baseline', act1: '1', act2: '2', act3: '3', act4: '4', act4b: '4b', act5: '5' };
+  $('dots').innerHTML = ORDER.map(k =>
+    `<a href="/act/${k}" id="dot-${k}" class="${k === NAME ? 'here' : ''}" title="${esc(ACTS[k].title)}">${short[k] ? (k === 'baseline' ? '💚 ' : 'Act ') + short[k] : k}</a>`).join('');
+  const i = ORDER.indexOf(NAME);
+  const prev = ORDER[i - 1], next = ORDER[i + 1];
+  $('prev').href = prev ? `/act/${prev}` : '/';
+  const name = (k) => k === 'baseline' ? 'Baseline' : ACTS[k].kicker;
+  $('prev').textContent = prev ? `◀ ${name(prev)}` : '◀ Controls';
+  $('next').href = next ? `/act/${next}` : '/';
+  $('next').textContent = next ? `${name(next)} ▶` : 'Controls ▶';
+}
+
+/* The diagram: nodes on a grid, arrows with moving dots showing traffic. */
+function renderFlow(flow) {
+  const X0 = 92, ROWH = 205, Y0 = 92;
+  const nodes = flow.nodes.filter(n => !(hidden && n.answerOnly));
+  const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+  const maxCol = Math.max(...flow.nodes.map(n => n.col)), maxRow = Math.max(...flow.nodes.map(n => n.row));
+  const COLW = Math.min(230, Math.max(168, (1000 - X0 * 2) / Math.max(1, maxCol)));
+  const W = Math.max(1000, X0 * 2 + maxCol * COLW), H = Y0 + maxRow * ROWH + 96;
+  const pos = (n) => ({ x: X0 + n.col * COLW + (W - (X0 * 2 + maxCol * COLW)) / 2, y: Y0 + n.row * ROWH });
+  const view = (item) => hidden ? (item.hint || { status: 'idle' }) : item;
+
+  const edges = flow.edges.filter(e => byId[e.from] && byId[e.to]).map((e, i) => {
+    const v = view(e), st = v.status || 'ok';
+    const a = pos(byId[e.from]), b = pos(byId[e.to]);
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+    // Leaving downward or arriving from below: clear the node's name + subtitle text under the circle.
+    // Arriving from above onto a node with a tag: stop above the tag.
+    const tagged = !!view(byId[e.to]).tag;
+    const s0 = uy > 0.3 ? 42 + 44 * uy : 42, e0 = uy < -0.3 ? 48 + 44 * -uy : uy > 0.3 && tagged ? 48 + 34 * uy : 48;
+    const sx = a.x + ux * s0, sy = a.y + uy * s0, ex = b.x - ux * e0, ey = b.y - uy * e0;
+    const d = `M${sx.toFixed(1)},${sy.toFixed(1)} L${ex.toFixed(1)},${ey.toFixed(1)}`;
+    const dur = st === 'slow' ? 5 : st === 'idle' ? 3 : 1.8;
+    const broken = st === 'bad' && !e.stop;
+    const dots = reduceMotion ? '' : [0, 1, 2].map(k =>
+      `<circle class="dot" r="5"><animateMotion dur="${dur}s" repeatCount="indefinite" begin="-${(dur * k / 3).toFixed(2)}s" path="${d}"
+        ${broken ? 'keyPoints="0;0.5;0.5" keyTimes="0;0.6;1" calcMode="linear"' : ''}/></circle>`).join('');
+    const mx = (sx + ex) / 2, my = (sy + ey) / 2;
+    // Flat arrows: label above, ✖ below. Angled/vertical arrows: label to the right, ✖ to the left.
+    const flat = Math.abs(uy) < 0.3;
+    const label = v.label ? (() => {
+      const w = v.label.length * 7.6 + 16, cx = flat ? mx : mx + w / 2 + 12, cy = flat ? my - 14 : my;
+      return `<g class="elabel"><rect x="${(cx - w / 2).toFixed(1)}" y="${(cy - 10).toFixed(1)}" width="${w.toFixed(1)}" height="20" rx="6"/><text x="${cx.toFixed(1)}" y="${(cy + 4).toFixed(1)}">${esc(v.label)}</text></g>`; })() : '';
+    const mark = broken ? `<text class="stop" x="${(flat ? mx : mx - 22).toFixed(1)}" y="${(flat ? my + 26 : my + 8).toFixed(1)}">✖️</text>` : '';
+    return `<g class="edge e-${st}"><path d="${d}" marker-end="url(#arrow-${st})"/>${dots}${label}${mark}</g>`;
+  }).join('');
+
+  const nodeSvg = nodes.map(n => {
+    const v = view(n), st = v.status || 'idle', p = pos(n);
+    const tag = v.tag ? (() => { const w = [...v.tag].length * 7.4 + 20; return `<g class="tag"><rect x="${(-w / 2).toFixed(1)}" y="-70" width="${w.toFixed(1)}" height="24" rx="12"/><text y="-53">${esc(v.tag)}</text></g>`; })() : '';
+    return `<g class="node s-${st}" transform="translate(${p.x.toFixed(1)},${p.y.toFixed(1)})">
+      <circle class="pulse" r="36"/><circle class="body" r="36"/>
+      <text class="icon" dy="0.36em">${n.icon}</text>
+      <text class="label" y="58">${esc(n.label)}</text><text class="sub" y="76">${esc(n.sub || '')}</text>${tag}</g>`;
+  }).join('');
+
+  const colors = { ok: '#34d399', slow: '#f59e0b', bad: '#f87171', attack: '#f87171', ai: '#a78bfa', guard: '#14b8a6', idle: '#64748b' };
+  const markers = Object.entries(colors).map(([k, c]) =>
+    `<marker id="arrow-${k}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Diagram of the payment path for this act"><defs>${markers}</defs>${edges}${nodeSvg}</svg>`;
+}
+
+/* Tiny line chart: steady, then the change at 60% of the way (up / down / flat). */
+function sparkline(trend, tone) {
+  const N = 40, W = 300, H = 54, pts = [];
+  let seed = trend.length * 7 + tone.length;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  for (let i = 0; i < N; i++) {
+    let v = 0.3 + (rnd() - 0.5) * 0.08;
+    const t = i / (N - 1);
+    if (t > 0.6 && trend !== 'flat') { const k = Math.min(1, (t - 0.6) / 0.12); v += (trend === 'up' ? 0.5 : -0.22) * k; }
+    pts.push([t * W, H - 6 - v * (H - 12)]);
+  }
+  const color = { bad: '#f87171', warn: '#f59e0b', good: '#34d399' }[tone] || '#94a3b8';
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="${W * 0.6}" y1="0" x2="${W * 0.6}" y2="${H}" stroke="#334155" stroke-dasharray="3 4"/>
+    <path d="${line} L${W},${H} L0,${H} Z" fill="${color}" opacity=".12"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function veil() { return `<div class="veil" onclick="toggleAnswer()"><div><span>🙈</span>Answer hidden<br>Find it in Splunk!</div></div>`; }
+
+function render() {
+  if (!A) { $('page').innerHTML = `<section><h2>Unknown act</h2><p><a href="/">Back to controls</a></p></section>`; return; }
+  document.title = `${NAME === 'baseline' ? 'Baseline' : A.kicker} · ${A.title}`;
+  document.body.classList.toggle('hidden', hidden);
+  let n = 0; const h = (t) => `<h2><span class="n">${++n}</span>${t}</h2>`;
+  $('page').innerHTML = `
+    <section class="hero">
+      <div class="badge">${A.icon}</div>
+      <div>
+        <div class="kicker">${esc(A.kicker)}</div>
+        <h1>${esc(A.title)}</h1>
+        <p class="line">${esc(A.line)}</p>
+        <div class="skills"><span class="lbl">You will practise:</span>${A.skills.map(s => `<span class="skill">${esc(s)}</span>`).join('')}</div>
+      </div>
+    </section>
+
+    <section>${h('What happens')}
+      <div class="story">${A.story.map((p, i) => `
+        <div class="panel ${p.tone || ''} ${p.spoiler ? 'spoiler' : ''}"><span class="step">${i + 1}</span>
+          <div class="pic">${p.icon}</div><b>${esc(p.head)}</b><p>${esc(p.text)}</p>${p.spoiler ? veil() : ''}</div>`).join('')}
+      </div>
+    </section>
+
+    <section>${h('The payment path')}
+      <div class="diagram">
+        <div class="fog">❓ Something inside is broken. Find where in Splunk.</div>
+        <div class="scroll">${renderFlow(A.flow)}</div>
+        <div class="legend">
+          <span><i style="background:var(--green)"></i>Healthy</span><span><i style="background:var(--amber)"></i>Slow</span>
+          <span><i style="background:var(--red)"></i>Broken / attack</span><span><i style="background:var(--purple)"></i>AI</span>
+          <span><i style="background:var(--teal)"></i>Safety check</span>${hidden && !A.noAnswer ? '<span><i style="background:var(--idle)"></i>Unknown yet</span>' : ''}
+        </div>
+      </div>
+    </section>
+
+    <section>${h('What you will see')}
+      <div class="metrics">${A.metrics.map(m => `
+        <div class="metric"><div class="top"><span class="ic">${m.icon}</span>${esc(m.label)}</div>
+          <div class="vals"><span class="before">${esc(m.before)}</span><span class="arrow">➜</span><span class="after ${m.tone}">${esc(m.after)}</span></div>
+          ${sparkline(m.trend, m.tone)}</div>`).join('')}
+      </div>
+    </section>
+
+    <section>${h('Your mission in Splunk')}
+      <div class="mission">${A.mission.map((s, i) => `
+        <div class="mstep"><div class="ic"><span class="k">${i + 1}</span>${s.icon}</div>
+          <div>${s.who ? `<span class="who">${esc(s.who)}</span>` : ''}<b>${esc(s.title)}</b><div class="where">${esc(s.where)}</div>${chips(s.chips)}</div></div>`).join('')}
+      </div>
+    </section>
+
+    ${A.answer ? `<section>${h('The answer')}
+      <div class="answer spoiler">${A.answer.map(f => `
+        <div class="fact"><span class="ic">${f.icon}</span><div>${esc(f.text)}${chips(f.chips)}</div></div>`).join('')}${veil()}
+      </div>
+    </section>` : ''}
+
+    <section>${h('Why this act?')}
+      <div class="why"><span class="ic">🎯</span><div>${A.why.map(p => `<p>${esc(p)}</p>`).join('')}</div></div>
+    </section>
+
+    <section>${h('Words to know')}
+      <div class="words">${A.words.map(w => `
+        <div class="word"><span class="ic">${w.icon}</span><div><b>${esc(w.word)}</b><span>${esc(w.meaning)}</span></div></div>`).join('')}
+      </div>
+    </section>`;
+  $('reveal').style.display = A.noAnswer ? 'none' : '';
+  $('reveal').textContent = hidden ? '👀 Show the answer' : '🙈 Hide the answer';
+}
+
+function toggleAnswer() {
+  if (!A || A.noAnswer) return;
+  hidden = !hidden;
+  history.replaceState(null, '', hidden ? location.pathname : '#answer');
+  const y = window.scrollY; render(); window.scrollTo(0, y);
+}
+
+/* ---------- Live status + actions (same endpoints as the controls page) ---------- */
+let running = null;
+function renderLive() {
+  const on = running === NAME;
+  $('live').classList.toggle('on', on);
+  $('live').textContent = on ? 'Running now' : running ? `Running: ${running}` : 'Nothing running';
+  $('start').classList.toggle('running', on);
+  $('start').textContent = on ? '⟳ Restart this act' : '▶ Start this act';
+  document.querySelectorAll('.dots a').forEach(a => a.classList.toggle('running', a.id === `dot-${running}`));
+}
+async function poll() {
+  try {
+    const [cur, traffic] = await Promise.all([fetch('/scenarios/current').then(r => r.json()), fetch('/traffic').then(r => r.json())]);
+    running = cur.name; renderLive();
+    $('paused-note').classList.toggle('show', !!traffic.paused);
+  } catch (e) { /* controller restarting: keep last state */ }
+}
+async function startAct() {
+  const b = $('start'); b.disabled = true;
+  try { await fetch(`/scenarios/${NAME}`, { method: 'POST' }); await poll(); } finally { b.disabled = false; }
+}
+async function resetAll() {
+  const b = $('reset'); b.disabled = true;
+  try { await fetch('/reset', { method: 'POST' }); await poll(); } finally { b.disabled = false; }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'ArrowLeft') location.href = $('prev').href;
+  else if (e.key === 'ArrowRight') location.href = $('next').href;
+  else if (e.key === 'a' || e.key === 'A') toggleAnswer();
+});
+
+renderDots(); render(); poll(); setInterval(poll, 5000);
+</script>
+</body>
+</html>

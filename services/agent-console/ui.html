@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TukTukPay Agentic Checkout Console</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --panel-2:#243247; --text:#e2e8f0; --muted:#94a3b8; --teal:#14b8a6; --purple:#a78bfa; --amber:#f59e0b; --red:#f87171; --green:#34d399; --border:#334155; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:18px 24px 12px; border-bottom:1px solid var(--border); display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:19px; }
+  header .sub { color:var(--muted); font-size:13px; }
+  main { padding:18px 24px 40px; max-width:1400px; margin:0 auto; display:grid; grid-template-columns: 1fr 1.2fr; gap:18px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
+  .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); }
+  .card h2 span { color:var(--teal); margin-right:6px; }
+  label { display:block; font-size:11px; color:var(--muted); margin-bottom:3px; text-transform:uppercase; letter-spacing:.06em; }
+  input, select, textarea { width:100%; background:#0b1220; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 9px; font:inherit; font-size:13px; }
+  textarea { min-height:52px; resize:vertical; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .grid .full { grid-column: 1 / -1; }
+  .merchants { display:flex; flex-wrap:wrap; gap:6px 12px; font-size:13px; }
+  .merchants label { display:inline-flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--text); }
+  .merchants input { width:auto; }
+  button { background:var(--teal); color:#062a29; border:0; border-radius:8px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--border); font-weight:500; }
+  button.attack { background:transparent; color:var(--amber); border:1px solid var(--amber); font-weight:500; font-size:12px; padding:6px 10px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  .kya { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; letter-spacing:.05em; }
+  .kya.A { background:#0f3d3b; color:var(--green); } .kya.B { background:#1d2b4f; color:#7dd3fc; } .kya.C { background:#3f3417; color:var(--amber); } .kya.D, .kya.none { background:#4a1d1d; color:var(--red); }
+  .timeline { list-style:none; padding:0; margin:10px 0 0; display:grid; gap:8px; }
+  .timeline li { display:grid; grid-template-columns: 62px 1fr; gap:10px; font-size:13.5px; line-height:1.4; padding:8px 10px; background:var(--panel-2); border-radius:8px; border-left:3px solid var(--border); }
+  .timeline li time { color:var(--muted); font-variant-numeric: tabular-nums; font-size:12px; }
+  .timeline li.ok { border-left-color:var(--green); } .timeline li.blocked { border-left-color:var(--red); } .timeline li.attack { border-left-color:var(--amber); } .timeline li.warn { border-left-color:var(--amber); }
+  .outcome { margin-top:12px; padding:12px 14px; border-radius:8px; font-size:14px; }
+  .outcome.purchased { background:#0f3d3b; } .outcome.blocked_by_mandate, .outcome.mandate_refused_by_wallet, .outcome.payment_declined, .outcome.error { background:#4a1d1d; }
+  .outcome a { color:var(--teal); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table a { color:var(--teal); }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.06em; font-size:11px; }
+  code { background:#0b1220; padding:1px 5px; border-radius:4px; font-size:12px; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; }
+  .pill.purchased { background:#0f3d3b; color:var(--green); } .pill.blocked_by_mandate, .pill.mandate_refused_by_wallet, .pill.payment_declined, .pill.error, .pill.payment_error { background:#4a1d1d; color:var(--red); } .pill.running, .pill.queued { background:#1d2b4f; color:#7dd3fc; } .pill.no_purchase { background:#3f3417; color:var(--amber); }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TukTukPay · Agentic Checkout Console</h1>
+  <div class="sub">An AI agent buys on a consumer's behalf under an AMP-style pre-approved task mandate. Every run is one trace in Splunk APM.</div>
+</header>
+<main>
+  <section class="card">
+    <h2><span>1</span>Consumer pre-approves a task (wallet issues the mandate)</h2>
+    <div class="grid">
+      <div><label>Customer</label><select id="customer"><option>cus_00001</option><option>cus_00042</option><option>cus_00777</option></select></div>
+      <div><label>Wallet</label><select id="wallet" onchange="syncCurrency()"><option value="truemoney">TrueMoney (THB)</option><option value="rabbitlinepay">Rabbit LINE Pay (THB)</option><option value="shopeepay">ShopeePay (THB)</option><option value="dana">DANA (IDR)</option><option value="gcash">GCash (PHP)</option><option value="tng">TNG eWallet (MYR)</option><option value="grabpay">GrabPay (SGD)</option></select></div>
+      <div class="full"><label>Agent (Know-Your-Agent registry)</label><select id="agent"></select></div>
+      <div class="full"><label>Task presets</label>
+        <div class="row" style="margin-top:4px">
+          <button class="ghost" onclick="preset('flight')">Cheapest BKK→SIN flight</button>
+          <button class="ghost" onclick="preset('headphones')">Noise-cancelling headphones</button>
+          <button class="ghost" onclick="preset('hotel')">Hotel night in Bangkok</button>
+          <button class="ghost" onclick="preset('credits')">Game credits</button>
+        </div>
+      </div>
+      <div class="full"><label>Intent (what the consumer asked the agent to do)</label><textarea id="intent"></textarea></div>
+      <div><label>Category</label><select id="category" onchange="syncMerchants()"><option>flights</option><option>hotels</option><option>electronics</option><option>games</option><option>food</option></select></div>
+      <div><label>Max amount</label><input id="max_amount" type="number" step="0.01" value="6000"></div>
+      <div><label>Currency</label><input id="currency" value="THB"></div>
+      <div><label>Expires in (seconds) · max uses</label><div style="display:flex;gap:6px"><input id="ttl" type="number" value="900"><input id="max_uses" type="number" value="1"></div></div>
+      <div class="full"><label>Allowed merchants</label><div class="merchants" id="merchants"></div></div>
+    </div>
+    <div class="row">
+      <button id="run" onclick="run()">Pre-approve and run the agent</button>
+      <span class="hint">Runs: wallet issues token → agent plans → catalog search → TukTukPay verifies the mandate → payment.</span>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <span class="hint" style="margin:0 6px 0 0">Simulate a misbehaving agent:</span>
+      <button class="attack" onclick="run('overspend')">Overspend (qty ×3)</button>
+      <button class="attack" onclick="run('injection')">Poisoned listing</button>
+      <button class="attack" onclick="run('replay')">Replay used token</button>
+      <button class="attack" onclick="run('forged')">Forged token</button>
+      <button class="attack" onclick="run('unregistered')">Unregistered agent</button>
+      <button class="attack" onclick="run('expired')">Expired mandate</button>
+      <button class="attack" onclick="run('wrong_merchant')">Wrong merchant</button>
+    </div>
+    <div class="hint">“Poisoned listing” needs the <code>catalog_prompt_injection</code> flag on in the chaos panel (it puts an injected description into lazada-th's catalog) — run it with the headphones preset.</div>
+  </section>
+
+  <section class="card">
+    <h2><span>2</span>Agent run</h2>
+    <div id="runhead" class="hint">No run yet.</div>
+    <ul class="timeline" id="timeline"></ul>
+    <div id="outcome"></div>
+  </section>
+
+  <section class="card wide">
+    <h2><span>3</span>Governance ledger — what TukTukPay let through and what it stopped</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Agent</th><th>KYA</th><th>Intent</th><th>Amount / limit</th><th>Simulation</th><th>Outcome</th><th>Reason</th><th>Trace</th></tr></thead>
+      <tbody id="ledger"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let cfg = {}, agents = {}, current = null, timer = null;
+const PRESETS = {
+  flight:     { intent: "Book the cheapest BKK to SIN economy flight for Friday morning", category: "flights", wallet: "truemoney", max_amount: 6000, currency: "THB", agent: "travelgenie.ai" },
+  headphones: { intent: "Buy the best-rated noise-cancelling headphones under my budget", category: "electronics", wallet: "shopeepay", max_amount: 6500, currency: "THB", agent: "shopbot.lazada" },
+  hotel:      { intent: "Book one night in a standard room in Bangkok for next Tuesday", category: "hotels", wallet: "rabbitlinepay", max_amount: 4000, currency: "THB", agent: "siam-concierge" },
+  credits:    { intent: "Top up 500 Garena Shells", category: "games", wallet: "truemoney", max_amount: 600, currency: "THB", agent: "gemini-shopper" },
+};
+const CAT_MERCHANTS = { flights: ["thai-airways"], hotels: ["centara-hotels"], electronics: ["lazada-th"], games: ["garena"], food: ["cafe-amazon"] };
+const ALL_MERCHANTS = ["thai-airways", "lazada-th", "centara-hotels", "garena", "cafe-amazon", "grab"];
+const WALLET_CCY = { truemoney: "THB", rabbitlinepay: "THB", shopeepay: "THB", dana: "IDR", gcash: "PHP", tng: "MYR", grabpay: "SGD" };
+
+async function init() {
+  cfg = await fetch('/config').then(r => r.json());
+  agents = await fetch('/v1/agents').then(r => r.json()).catch(() => ({}));
+  $('agent').innerHTML = Object.entries(agents).map(([id, a]) => `<option value="${id}">${id} — ${a.operator} · KYA ${a.rating}${a.registered ? '' : ' (not registered)'}</option>`).join('');
+  preset('flight');
+  refreshLedger(); setInterval(refreshLedger, 4000);
+}
+function preset(name) {
+  const p = PRESETS[name];
+  $('intent').value = p.intent; $('category').value = p.category; $('wallet').value = p.wallet; $('max_amount').value = p.max_amount; $('currency').value = p.currency;
+  if (agents[p.agent]) $('agent').value = p.agent;
+  syncMerchants();
+}
+function syncCurrency() { $('currency').value = WALLET_CCY[$('wallet').value] || 'SGD'; }
+function syncMerchants() {
+  const allowed = CAT_MERCHANTS[$('category').value] || [];
+  $('merchants').innerHTML = ALL_MERCHANTS.map(m => `<label><input type="checkbox" value="${m}" ${allowed.includes(m) ? 'checked' : ''}> ${m}</label>`).join('');
+}
+function spec() {
+  return {
+    agent_id: $('agent').value, customer_id: $('customer').value, wallet: $('wallet').value, intent: $('intent').value, category: $('category').value,
+    max_amount: Number($('max_amount').value), currency: $('currency').value,
+    merchants: [...document.querySelectorAll('#merchants input:checked')].map(i => i.value), ttl_s: Number($('ttl').value), max_uses: Number($('max_uses').value),
+  };
+}
+async function run(attack) {
+  const s = spec();
+  if (attack === 'unregistered') s.agent_id = 'promo-hunter-bot';
+  $('run').disabled = true;
+  const task = await fetch('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mandate: s, attack: attack || null }) }).then(r => r.json());
+  current = task.id;
+  $('runhead').textContent = `Run ${task.id} · agent ${task.agent_id}${attack ? ' · simulation: ' + attack : ''}`;
+  $('timeline').innerHTML = ''; $('outcome').innerHTML = '';
+  clearInterval(timer); timer = setInterval(poll, 500);
+}
+async function poll() {
+  const t = await fetch('/v1/tasks/' + current).then(r => r.json());
+  $('timeline').innerHTML = t.steps.map(s => `<li class="${s.kind || ''}"><time>${s.t}</time><div>${esc(s.text)}</div></li>`).join('');
+  if (t.status === 'done' || t.status === 'blocked' || t.status === 'error') {
+    clearInterval(timer); $('run').disabled = false;
+    const link = traceLink(t.trace_id);
+    const usage = t.usage ? ` · ${t.usage.input_tokens + t.usage.output_tokens} tokens, $${t.usage.cost_usd}` : '';
+    $('outcome').innerHTML = `<div class="outcome ${t.outcome}"><b>${label(t.outcome)}</b>${t.payment && t.payment.decline_reason ? ' — ' + esc(t.payment.decline_reason) : ''}${t.detail ? ' — ' + esc(t.detail) : ''}<br><span class="hint">trace ${link}${usage}</span></div>`;
+    refreshLedger();
+  }
+}
+function traceLink(id) { if (!id) return '—'; return cfg.trace_url_template ? `<a target="_blank" href="${cfg.trace_url_template.replace('{trace_id}', id)}">${id}</a>` : `<code>${id}</code>`; }
+function label(o) { return ({ purchased: 'Purchased', blocked_by_mandate: 'Blocked by TukTukPay mandate verification', mandate_refused_by_wallet: 'Wallet refused to issue a mandate', payment_declined: 'Payment declined', no_purchase: 'No purchase', error: 'Error' })[o] || o; }
+async function refreshLedger() {
+  const rows = await fetch('/v1/tasks?limit=25').then(r => r.json());
+  $('ledger').innerHTML = rows.map(t => {
+    const kya = (t.mandate && t.mandate.kya_rating) || (agents[t.agent_id] ? agents[t.agent_id].rating : '?');
+    const amt = t.payment && t.payment.amount != null ? `${t.payment.amount} / ${t.max_amount} ${t.currency}` : `— / ${t.max_amount} ${t.currency}`;
+    const reason = (t.payment && t.payment.decline_reason) || (t.outcome === 'mandate_refused_by_wallet' ? 'agent_not_registered' : '') || (t.flags && t.flags.length ? t.flags.join('; ') : '');
+    return `<tr><td>${new Date(t.started * 1000).toLocaleTimeString()}</td><td>${t.agent_id}</td><td><span class="kya ${kya}">${kya}</span></td><td>${esc(t.intent).slice(0, 60)}</td><td>${amt}</td><td>${t.attack || ''}</td><td><span class="pill ${t.outcome || t.status}">${t.outcome || t.status}</span></td><td>${esc(reason)}</td><td>${traceLink(t.trace_id)}</td></tr>`;
+  }).join('');
+}
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+init();
+</script>
+</body>
+</html>

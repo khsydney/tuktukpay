@@ -1,0 +1,110 @@
+# "Dual-ship" collector config for the migration story: ONE OpenTelemetry
+# pipeline, TWO back ends. Uses the upstream contrib image because it bundles the
+# Datadog exporter next to the Splunk exporters.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dualship.yml up -d
+#
+# Talk track: nothing in the applications changes. Switching vendors is a
+# collector config change, and during the evaluation both get identical data.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 10s
+    scrapers:
+      cpu:
+      memory:
+      load:
+      network:
+      filesystem:
+
+processors:
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 400
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1024
+    timeout: 5s
+  resourcedetection:
+    detectors: [env, system]
+    override: true
+  resource/add_environment:
+    attributes:
+      - action: upsert
+        key: deployment.environment
+        value: ${env:DEPLOYMENT_ENVIRONMENT}
+  filter/drop-chaos-polling:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["server.address"] == "chaos-controller"'
+        - 'attributes["net.peer.name"] == "chaos-controller"'
+        - 'IsMatch(attributes["url.full"], ".*chaos-controller.*")'
+        - 'IsMatch(attributes["http.url"], ".*chaos-controller.*")'
+        - 'IsMatch(attributes["url.full"], ".*/flags$")'
+        - 'IsMatch(attributes["http.url"], ".*/flags$")'
+  transform/router-headers:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["payment.acquirer"], attributes["http.response.header.x-payment-acquirer"][0]) where attributes["http.response.header.x-payment-acquirer"] != nil
+          - set(attributes["payment.acquirer"], attributes["http.response.header.x_payment_acquirer"][0]) where attributes["http.response.header.x_payment_acquirer"] != nil
+          - set(attributes["route.attempts"], attributes["http.response.header.x-route-attempts"][0]) where attributes["http.response.header.x-route-attempts"] != nil
+          - set(attributes["route.attempts"], attributes["http.response.header.x_route_attempts"][0]) where attributes["http.response.header.x_route_attempts"] != nil
+          - set(attributes["route.failover"], attributes["http.response.header.x-route-failover"][0]) where attributes["http.response.header.x-route-failover"] != nil
+          - set(attributes["route.failover"], attributes["http.response.header.x_route_failover"][0]) where attributes["http.response.header.x_route_failover"] != nil
+          - set(attributes["payment.outcome"], attributes["http.response.header.x-route-outcome"][0]) where attributes["http.response.header.x-route-outcome"] != nil
+          - set(attributes["payment.outcome"], attributes["http.response.header.x_route_outcome"][0]) where attributes["http.response.header.x_route_outcome"] != nil
+          - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]route.*")
+          - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]payment.*")
+
+exporters:
+  # ---- Splunk Observability Cloud
+  signalfx:
+    access_token: ${env:SPLUNK_ACCESS_TOKEN}
+    realm: ${env:SPLUNK_REALM}
+    sync_host_metadata: true
+    correlation:
+  otlphttp/splunk:
+    traces_endpoint: https://ingest.${env:SPLUNK_REALM}.observability.splunkcloud.com/v2/trace/otlp
+    headers:
+      X-SF-Token: ${env:SPLUNK_ACCESS_TOKEN}
+  # ---- Datadog (the incumbent) — same spans, same metrics
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+    hostname: tuktukpay-workshop
+  debug:
+    verbosity: basic
+
+connectors:
+  # Datadog needs its APM stats computed from the traces when they bypass the DD Agent.
+  datadog/connector:
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/drop-chaos-polling, transform/router-headers, resourcedetection, resource/add_environment, batch]
+      exporters: [otlphttp/splunk, signalfx, datadog/connector, datadog]
+    metrics:
+      receivers: [otlp, hostmetrics, datadog/connector]
+      processors: [memory_limiter, resourcedetection, resource/add_environment, batch]
+      exporters: [signalfx, datadog]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource/add_environment, batch]
+      exporters: [datadog]

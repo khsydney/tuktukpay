@@ -1,0 +1,10 @@
+{
+  "merchant_id": "thai-airways",
+  "amount": 4520.50,
+  "currency": "THB",
+  "payment_method": "card",
+  "card": {"bin": "457173", "last4": "1234", "network": "visa"},
+  "customer": {"id": "cus_00001", "country": "TH"},
+  "order_id": "ORD-THAI-DEMO-1",
+  "channel": "web"
+}

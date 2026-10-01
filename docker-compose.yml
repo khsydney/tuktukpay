@@ -1,0 +1,273 @@
+# TukTukPay — "11.11 War Room" workshop stack
+#
+#   cp .env.example .env      # add your Splunk realm + access token
+#   docker compose up -d --build
+#   open http://localhost:8090   (chaos controls)
+#
+# Swap the Node.js ledger for the .NET one:
+#   docker compose -f docker-compose.yml -f docker-compose.dotnet.yml up -d --build
+# Dual-ship to Datadog while evaluating (migration story):
+#   docker compose -f docker-compose.yml -f docker-compose.dualship.yml up -d
+
+name: tuktukpay-workshop   # fixes image names (tuktukpay-workshop-<service>) whatever the folder is called
+
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-tuktukpay-team01},service.namespace=tuktukpay,service.version=${SERVICE_VERSION:-2026.09.1}
+  OTEL_PROPAGATORS: tracecontext,baggage
+  CHAOS_URL: http://chaos-controller:8090
+
+x-python-otel-env: &python-otel-env
+  <<: *otel-env
+  OTEL_PYTHON_LOG_CORRELATION: "true"
+  OTEL_PYTHON_LOG_LEVEL: info
+  OTEL_PYTHON_URLLIB_EXCLUDED_URLS: chaos-controller
+  OTEL_PYTHON_EXCLUDED_URLS: healthz
+  SPLUNK_PROFILER_ENABLED: "true"   # AlwaysOn Profiling (CPU) for Python
+
+x-node-otel-env: &node-otel-env
+  <<: *otel-env
+  SPLUNK_PROFILER_ENABLED: "true"
+  SPLUNK_PROFILER_MEMORY_ENABLED: "true"
+  SPLUNK_RUNTIME_METRICS_ENABLED: "true"
+  OTEL_METRICS_EXPORTER: otlp
+
+services:
+  # ---------------------------------------------------------------- telemetry
+  otel-collector:
+    image: quay.io/signalfx/splunk-otel-collector:latest
+    container_name: otel-collector
+    user: "0:0"            # read /var/run/docker.sock for the docker_stats receiver (Docker Desktop)
+    command: ["--config=/etc/otel/collector-config.yaml"]
+    environment:
+      SPLUNK_ACCESS_TOKEN: ${SPLUNK_ACCESS_TOKEN:?set SPLUNK_ACCESS_TOKEN in .env}
+      SPLUNK_REALM: ${SPLUNK_REALM:?set SPLUNK_REALM in .env}
+      SPLUNK_MEMORY_TOTAL_MIB: "512"
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-tuktukpay-team01}
+      # Optional: send logs to your Splunk platform HEC for Log Observer Connect
+      SPLUNK_HEC_URL: ${SPLUNK_HEC_URL:-https://ingest.${SPLUNK_REALM}.observability.splunkcloud.com/v1/log}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:-${SPLUNK_ACCESS_TOKEN}}
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "13133:13133" # health
+      - "55679:55679" # zpages
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- data stores
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: tuktukpay
+      POSTGRES_PASSWORD: tuktukpay
+      POSTGRES_DB: tuktukpay
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tuktukpay -d tuktukpay"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------------------------------------------------------------- workshop tooling
+  chaos-controller:
+    build: ./services/chaos-controller
+    container_name: chaos-controller
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- payment platform
+  checkout-api:            # Go — public payments API (manual OTel SDK)
+    build: ./services/checkout-api
+    container_name: checkout-api
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: checkout-api
+      PORT: "8080"
+      RISK_URL: http://risk-engine:8081
+      ROUTER_URL: http://payment-router:8082
+      LEDGER_URL: http://ledger:8084
+      WALLET_URL: http://wallet-sim:8088
+      AMP_SHARED_SECRET: ${AMP_SHARED_SECRET:-tuktukpay-amp-demo-secret}
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    restart: unless-stopped
+
+  risk-engine:             # Python — fraud/risk scoring (zero-code Splunk distro)
+    build: ./services/risk-engine
+    container_name: risk-engine
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: risk-engine
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  payment-router:          # Java 21 — acquirer routing + failover (zero-code Java agent)
+    build: ./services/payment-router
+    container_name: payment-router
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: payment-router
+      JAVA_TOOL_OPTIONS: -javaagent:/otel/splunk-otel-javaagent.jar
+      SPLUNK_PROFILER_ENABLED: "true"
+      SPLUNK_PROFILER_MEMORY_ENABLED: "true"
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS: x-payment-acquirer,x-route-attempts,x-route-failover,x-route-outcome
+      ACQUIRER_URL: http://acquirer-sim:8083
+      ACQUIRER_TIMEOUT_MS: "2500"
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
+  acquirer-sim:            # Node.js — simulated acquirers & wallet rails (zero-code)
+    build: ./services/acquirer-sim
+    container_name: acquirer-sim
+    environment:
+      <<: *node-otel-env
+      OTEL_SERVICE_NAME: acquirer-sim
+      PORT: "8083"
+    ports:
+      - "8083:8083"
+    restart: unless-stopped
+
+  ledger:                  # Node.js + PostgreSQL — system of record (zero-code). .NET variant: docker-compose.dotnet.yml
+    build: ./services/ledger
+    container_name: ledger
+    environment:
+      <<: *node-otel-env
+      OTEL_SERVICE_NAME: ledger
+      PORT: "8084"
+      DATABASE_URL: postgres://tuktukpay:tuktukpay@postgres:5432/tuktukpay
+      PG_POOL_SIZE: "10"
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+  webhook-dispatcher:      # Python worker — async merchant webhooks via Redis Streams
+    build: ./services/webhook-dispatcher
+    container_name: webhook-dispatcher
+    command: ["opentelemetry-instrument", "python", "worker.py"]
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: webhook-dispatcher
+      REDIS_URL: redis://redis:6379/0
+      MERCHANT_SIM_URL: http://merchant-sim:8085
+    depends_on:
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  merchant-sim:            # Python — merchants' webhook endpoints
+    build: ./services/webhook-dispatcher
+    container_name: merchant-sim
+    command: ["opentelemetry-instrument", "uvicorn", "merchant_sim:app", "--host", "0.0.0.0", "--port", "8085", "--no-access-log"]
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: merchant-sim
+    ports:
+      - "8085:8085"
+    restart: unless-stopped
+
+  merchant-copilot:        # Python — LLM agent (GenAI semantic conventions)
+    build: ./services/merchant-copilot
+    container_name: merchant-copilot
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: merchant-copilot
+      LEDGER_URL: http://ledger:8084
+      COPILOT_PROVIDER: ${COPILOT_PROVIDER:-mock}
+      COPILOT_MODEL: ${COPILOT_MODEL:-}
+      COPILOT_GUARDRAIL: ${COPILOT_GUARDRAIL:-on}
+      COPILOT_CAPTURE_CONTENT: ${COPILOT_CAPTURE_CONTENT:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+    ports:
+      - "8086:8086"
+    restart: unless-stopped
+
+  wallet-sim:              # Python — consumer wallet: AMP task mandates + Know-Your-Agent registry
+    build: ./services/agent-console
+    container_name: wallet-sim
+    command: ["opentelemetry-instrument", "uvicorn", "wallet_sim:app", "--host", "0.0.0.0", "--port", "8088", "--no-access-log"]
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: wallet-sim
+      AMP_SHARED_SECRET: ${AMP_SHARED_SECRET:-tuktukpay-amp-demo-secret}
+    ports:
+      - "8088:8088"
+    restart: unless-stopped
+
+  shopping-agent:          # Python — AI shopping agent + Agentic Checkout Console (http://localhost:8087)
+    build: ./services/agent-console
+    container_name: shopping-agent
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: shopping-agent
+      CHECKOUT_URL: http://checkout-api:8080
+      WALLET_URL: http://wallet-sim:8088
+      MERCHANT_SIM_URL: http://merchant-sim:8085
+      CONSOLE_SPLUNK_REALM: ${SPLUNK_REALM}   # for 'open trace in Splunk' links only
+      AMP_SHARED_SECRET: ${AMP_SHARED_SECRET:-tuktukpay-amp-demo-secret}
+      AGENT_PROVIDER: ${AGENT_PROVIDER:-mock}
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      AGENT_GUARDRAIL: ${AGENT_GUARDRAIL:-flag}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+    ports:
+      - "8087:8087"
+    depends_on:
+      - checkout-api
+      - wallet-sim
+      - merchant-sim
+    restart: unless-stopped
+
+  loadgen:                 # Python — merchants' storefronts calling the API + asking the copilot
+    build: ./services/loadgen
+    container_name: merchant-storefront
+    environment:
+      <<: *python-otel-env
+      OTEL_SERVICE_NAME: merchant-storefront
+      CHECKOUT_URL: http://checkout-api:8080
+      COPILOT_URL: http://merchant-copilot:8086
+      BASE_RPS: ${BASE_RPS:-4}
+      COPILOT_INTERVAL_S: ${COPILOT_INTERVAL_S:-8}
+      AMP_SHARED_SECRET: ${AMP_SHARED_SECRET:-tuktukpay-amp-demo-secret}
+    depends_on:
+      - checkout-api
+      - merchant-copilot
+    restart: unless-stopped
+
+volumes:
+  pgdata:

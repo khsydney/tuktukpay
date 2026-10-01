@@ -1,0 +1,96 @@
+# Helm values for the Splunk Distribution of the OpenTelemetry Collector on EKS,
+# with the OpenTelemetry Operator for zero-code auto-instrumentation.
+#
+#   helm repo add splunk-otel-collector-chart https://signalfx.github.io/splunk-otel-collector-chart
+#   helm repo update
+#   helm upgrade --install splunk-otel-collector splunk-otel-collector-chart/splunk-otel-collector \
+#     --namespace splunk-otel --create-namespace \
+#     --set splunkObservability.accessToken=$SPLUNK_ACCESS_TOKEN \
+#     -f k8s/values-splunk-otel-collector.yaml
+#
+# Then: kubectl apply -f k8s/tuktukpay.yaml   (annotated pods get the Java / Node.js / .NET agents injected at start)
+
+clusterName: tuktukpay-eks
+environment: tuktukpay-eks            # becomes deployment.environment on everything the collector emits
+
+splunkObservability:
+  realm: au0                         # your realm (sg0/au0/jp0/us1/eu0)
+  # accessToken: set with --set or via an existing secret (secret.create=false, secret.name=...)
+  profilingEnabled: true             # AlwaysOn Profiling data path
+  infrastructureMonitoringEventsEnabled: true
+  logsEnabled: false                 # true only if your org has Observability Logs / you don't use Log Observer Connect
+
+# Optional: logs to your Splunk platform (Log Observer Connect)
+# splunkPlatform:
+#   endpoint: https://http-inputs-<stack>.splunkcloud.com/services/collector/event
+#   token: <HEC token>
+#   index: tuktukpay
+
+# --- Zero-code auto-instrumentation via the OpenTelemetry Operator -----------------
+operatorcrds:
+  install: true
+operator:
+  enabled: true
+# The chart creates an Instrumentation CR named splunk-otel-collector in this namespace.
+# Reference it from workloads with:
+#   instrumentation.opentelemetry.io/inject-java:   "splunk-otel/splunk-otel-collector"
+#   instrumentation.opentelemetry.io/inject-nodejs: "splunk-otel/splunk-otel-collector"
+#   instrumentation.opentelemetry.io/inject-dotnet: "splunk-otel/splunk-otel-collector"
+instrumentation:
+  spec:
+    propagators: [tracecontext, baggage]
+    java:
+      env:
+        - name: SPLUNK_PROFILER_ENABLED
+          value: "true"
+        - name: SPLUNK_PROFILER_MEMORY_ENABLED
+          value: "true"
+    nodejs:
+      env:
+        - name: SPLUNK_PROFILER_ENABLED
+          value: "true"
+    dotnet:
+      env:
+        - name: SPLUNK_PROFILER_ENABLED
+          value: "true"
+
+# --- Agent (DaemonSet) pipeline tweaks: same workshop plumbing as otel/collector-config.yaml
+agent:
+  config:
+    processors:
+      filter/drop-chaos-polling:
+        error_mode: ignore
+        traces:
+          span:
+            - 'attributes["server.address"] == "chaos-controller"'
+            - 'attributes["net.peer.name"] == "chaos-controller"'
+            - 'IsMatch(attributes["url.full"], ".*chaos-controller.*")'
+            - 'IsMatch(attributes["http.url"], ".*chaos-controller.*")'
+            - 'IsMatch(attributes["url.full"], ".*/flags$")'
+            - 'IsMatch(attributes["http.url"], ".*/flags$")'
+      transform/router-headers:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - set(attributes["payment.acquirer"], attributes["http.response.header.x-payment-acquirer"][0]) where attributes["http.response.header.x-payment-acquirer"] != nil
+              - set(attributes["payment.acquirer"], attributes["http.response.header.x_payment_acquirer"][0]) where attributes["http.response.header.x_payment_acquirer"] != nil
+              - set(attributes["route.attempts"], attributes["http.response.header.x-route-attempts"][0]) where attributes["http.response.header.x-route-attempts"] != nil
+              - set(attributes["route.attempts"], attributes["http.response.header.x_route_attempts"][0]) where attributes["http.response.header.x_route_attempts"] != nil
+              - set(attributes["route.failover"], attributes["http.response.header.x-route-failover"][0]) where attributes["http.response.header.x-route-failover"] != nil
+              - set(attributes["route.failover"], attributes["http.response.header.x_route_failover"][0]) where attributes["http.response.header.x_route_failover"] != nil
+              - set(attributes["payment.outcome"], attributes["http.response.header.x-route-outcome"][0]) where attributes["http.response.header.x-route-outcome"] != nil
+              - set(attributes["payment.outcome"], attributes["http.response.header.x_route_outcome"][0]) where attributes["http.response.header.x_route_outcome"] != nil
+              - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]route.*")
+              - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]payment.*")
+    service:
+      pipelines:
+        traces:
+          processors:
+            - memory_limiter
+            - k8sattributes
+            - filter/drop-chaos-polling
+            - transform/router-headers
+            - batch
+            - resourcedetection
+            - resource

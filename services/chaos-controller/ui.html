@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TukTukPay War Room Controls</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel-2: #243247; --text: #e2e8f0; --muted: #94a3b8;
+    --teal: #14b8a6; --purple: #a78bfa; --amber: #f59e0b; --red: #f87171; --green: #34d399; --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 20px 24px 40px; max-width: 1200px; margin: 0 auto; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 28px 0 12px; }
+  .acts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .act { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; text-align: left; color: var(--text); font: inherit; }
+  .act:hover { border-color: var(--teal); }
+  .act.active { border-color: var(--purple); box-shadow: 0 0 0 1px var(--purple) inset; }
+  .act b { display: block; font-size: 13px; margin-bottom: 4px; }
+  .act span { font-size: 12px; color: var(--muted); }
+  .act { display: flex; flex-direction: column; }
+  .act .act-foot { margin-top: auto; padding-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .act .explain, .act .run { white-space: nowrap; }
+  .act .explain { font-size: 12px; color: var(--teal); }
+  .act .run { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .act .run:hover { border-color: var(--amber); color: var(--amber); }
+  .act.active .run { border-color: var(--purple); color: var(--purple); }
+  .flags { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  .flag { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .flag.on { border-color: var(--amber); background: linear-gradient(180deg, var(--panel), var(--panel-2)); }
+  .flag .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .flag h3 { margin: 0; font-size: 15px; }
+  .flag .consumer { font-size: 11px; color: var(--teal); text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
+  .flag p { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 10px 0; }
+  .params { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .params label { font-size: 11px; color: var(--muted); display: block; }
+  .params input { width: 100%; background: #0b1220; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  .switch { position: relative; width: 46px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: #475569; border-radius: 26px; transition: .2s; cursor: pointer; }
+  .slider:before { content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background: var(--amber); }
+  .switch input:checked + .slider:before { transform: translateX(20px); }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; font-size: 13px; }
+  button.ghost:hover { border-color: var(--red); color: var(--red); }
+  .status { font-size: 12px; color: var(--muted); }
+  code { background: #0b1220; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+  .traffic { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .traffic .pill { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--green); color: var(--green); }
+  .traffic .pill::before { content: "● "; }
+  .traffic.paused .pill { border-color: var(--amber); color: var(--amber); }
+  .traffic button { border-radius: 8px; padding: 8px 14px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 600; border: 1px solid var(--amber); background: var(--amber); color: #111827; }
+  .traffic.paused button { border-color: var(--green); background: var(--green); }
+  .traffic button:disabled { opacity: .6; cursor: wait; }
+  .banner { display: none; margin: 16px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--amber); color: var(--amber); background: rgba(245, 158, 11, .08); font-size: 13px; }
+  .banner.show { display: block; }
+  .history { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; max-height: 180px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TukTukPay · 11.11 War Room controls</h1>
+  <div class="sub">Facilitator panel — every service polls <code>GET /flags</code> every 2s. Changes take effect within seconds.</div>
+  <div class="traffic" id="traffic">
+    <span class="pill" id="traffic-pill">Traffic running</span>
+    <button id="traffic-btn" onclick="toggleTraffic()" title="Stop or restart the simulated merchant traffic (payments + copilot questions)">Pause traffic</button>
+  </div>
+</header>
+<main>
+  <div class="banner" id="traffic-banner">Traffic is paused: the load generator sends no payments or copilot questions, so the laptop stays mostly idle. Storyline presets and failure injections will not show up in Splunk until you press <b>Resume traffic</b>. The agentic checkout console still works on demand.</div>
+  <h2>Storyline presets</h2>
+  <div class="acts" id="acts"></div>
+
+  <h2>Individual failure injections</h2>
+  <div class="toolbar">
+    <button class="ghost" onclick="resetAll()">Reset everything to healthy</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="flags" id="flags" style="margin-top:12px"></div>
+
+  <h2>Recent actions</h2>
+  <div class="history" id="history"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let defs = {}, state = {}, scenarios = {}, traffic = { paused: false };
+
+async function load() {
+  let current;
+  [defs, state, scenarios, current] = await Promise.all([
+    fetch('/flags/definitions').then(r => r.json()),
+    fetch('/flags').then(r => r.json()),
+    fetch('/scenarios').then(r => r.json()),
+    fetch('/scenarios/current').then(r => r.json()),
+  ]);
+  traffic.paused = !!(state.traffic_paused && state.traffic_paused.enabled);
+  renderActs(); renderFlags(); renderTraffic(); loadHistory();
+  if (current.name) $(`act-${current.name}`)?.classList.add('active');
+}
+
+function renderActs() {
+  $('acts').innerHTML = Object.entries(scenarios).map(([k, title]) => {
+    const [head, ...rest] = title.split(' — ');
+    return `<div class="act" id="act-${k}" role="link" tabindex="0" title="Open the picture guide for ${head}"
+      onclick="location.href='/act/${k}'" onkeydown="if(event.key==='Enter')location.href='/act/${k}'">
+      <b>${head}</b><span>${rest.join(' — ')}</span>
+      <div class="act-foot"><span class="explain">📖 Guide →</span>
+        <button class="run" onclick="event.stopPropagation(); runScenario('${k}')" title="Start this act now without opening the guide">▶ Run now</button></div>
+    </div>`;
+  }).join('');
+}
+
+function renderFlags() {
+  $('flags').innerHTML = Object.entries(defs).map(([name, d]) => {
+    const s = state[name] || { enabled: false, params: d.params };
+    const params = Object.entries(s.params).map(([k, v]) =>
+      `<div><label>${k}</label><input data-flag="${name}" data-param="${k}" value="${v}" onchange="setParam(this)"></div>`).join('');
+    return `<div class="flag ${s.enabled ? 'on' : ''}" id="flag-${name}">
+      <div class="row">
+        <div><h3>${d.title}</h3><div class="consumer">${d.consumer}</div></div>
+        <label class="switch"><input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggle('${name}', this.checked)"><span class="slider"></span></label>
+      </div>
+      <p>${d.description}</p>
+      <div class="params">${params}</div>
+    </div>`;
+  }).join('');
+  const on = Object.keys(defs).filter(k => state[k] && state[k].enabled).length;
+  $('status').textContent = on ? `${on} injection(s) active` : 'all healthy';
+}
+
+function renderTraffic() {
+  $('traffic').classList.toggle('paused', traffic.paused);
+  $('traffic-pill').textContent = traffic.paused ? 'Traffic paused' : 'Traffic running';
+  $('traffic-btn').textContent = traffic.paused ? 'Resume traffic' : 'Pause traffic';
+  $('traffic-banner').classList.toggle('show', traffic.paused);
+}
+
+async function toggleTraffic() {
+  const btn = $('traffic-btn'); btn.disabled = true;
+  try {
+    traffic = await fetch('/traffic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused: !traffic.paused }) }).then(r => r.json());
+  } finally { btn.disabled = false; }
+  renderTraffic(); loadHistory();
+}
+
+async function toggle(name, enabled) {
+  document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
+  state[name] = await fetch(`/flags/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }).then(r => r.json());
+  renderFlags(); loadHistory();
+}
+
+async function setParam(input) {
+  const name = input.dataset.flag, key = input.dataset.param;
+  let value = input.value; if (!isNaN(value) && value.trim() !== '') value = Number(value);
+  state[name] = await fetch(`/flags/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ params: { [key]: value } }) }).then(r => r.json());
+  loadHistory();
+}
+
+async function runScenario(name) {
+  const res = await fetch(`/scenarios/${name}`, { method: 'POST' }).then(r => r.json());
+  state = res.flags; renderFlags(); loadHistory();
+  document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
+  $(`act-${name}`).classList.add('active');
+}
+
+async function resetAll() {
+  state = await fetch('/reset', { method: 'POST' }).then(r => r.json());
+  renderFlags(); loadHistory();
+  document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
+}
+
+async function loadHistory() {
+  const h = await fetch('/history').then(r => r.json());
+  $('history').innerHTML = h.slice().reverse().map(e => `${e.ts} · ${e.action} ${e.flag || e.scenario || ''}`).join('<br>') || 'no actions yet';
+}
+
+load();
+setInterval(async () => {
+  state = await fetch('/flags').then(r => r.json());
+  traffic.paused = !!(state.traffic_paused && state.traffic_paused.enabled);
+  renderFlags(); renderTraffic();
+}, 5000);
+</script>
+</body>
+</html>

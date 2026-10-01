@@ -1,0 +1,15 @@
+.env
+node_modules/
+__pycache__/
+*.pyc
+bin/
+obj/
+.terraform/
+terraform.tfstate*
+*.log
+.DS_Store
+
+# Workshop material and docs stay local; only the root README is published
+workshop/
+*.md
+!/README.md

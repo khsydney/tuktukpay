@@ -1,0 +1,17 @@
+{
+  "name": "tuktukpay-ledger",
+  "version": "1.4.2",
+  "private": true,
+  "description": "TukTukPay ledger service (Node.js + PostgreSQL)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node -r @splunk/otel/instrument server.js",
+    "start:plain": "node server.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@splunk/otel": "^3.0.0",
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  }
+}

@@ -1,0 +1,7 @@
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.30
+pydantic>=2.7
+# Splunk Distribution of OpenTelemetry Python (adds Splunk defaults, AlwaysOn
+# Profiling support, Server-Timing propagation). Instrumentation libraries are
+# installed in the Dockerfile with `opentelemetry-bootstrap -a install`.
+splunk-opentelemetry>=2.9

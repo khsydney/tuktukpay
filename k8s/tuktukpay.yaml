@@ -1,0 +1,1050 @@
+# Generated from docker-compose.yml semantics — see k8s/README.md.
+# Placeholders: ${IMAGE_REGISTRY} ${NAMESPACE} ${DEPLOYMENT_ENVIRONMENT} — k8s/apply.sh substitutes them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${NAMESPACE}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tuktukpay-db
+  namespace: ${NAMESPACE}
+type: Opaque
+stringData:
+  DATABASE_URL: postgres://tuktukpay:tuktukpay@postgres:5432/tuktukpay
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tuktukpay-db-init
+  namespace: ${NAMESPACE}
+data:
+  init.sql: "-- TukTukPay ledger schema. Runs automatically on first start of the postgres container.\n\nCREATE TABLE IF NOT EXISTS merchants (\n    id        text PRIMARY KEY,\n    name      text NOT NULL,\n    country   text NOT NULL,\n    segment   text NOT NULL,\n    tier      text NOT NULL DEFAULT 'standard',\n    mcc       text\n);\n\nCREATE TABLE IF NOT EXISTS payments (\n    payment_id          text PRIMARY KEY,\n    merchant_id         text NOT NULL,\n    order_id            text,\n    amount              numeric(14,2) NOT NULL DEFAULT 0,\n    currency            text,\n    payment_method      text,\n    status              text NOT NULL,\n    acquirer            text,\n    auth_code           text,\n    decline_reason      text,\n    initiator           text NOT NULL DEFAULT 'human',\n    card_bin            text,\n    card_network        text,\n    customer_country    text,\n    risk_score          numeric(6,4),\n    risk_model_version  text,\n    created_at          timestamptz NOT NULL DEFAULT now(),\n    updated_at          timestamptz NOT NULL DEFAULT now()\n);\nCREATE INDEX IF NOT EXISTS payments_merchant_created_idx ON payments (merchant_id, created_at DESC);\nCREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status);\n\nCREATE TABLE IF NOT EXISTS ledger_entries (\n    id          bigserial PRIMARY KEY,\n    payment_id  text NOT NULL REFERENCES payments (payment_id) ON DELETE CASCADE,\n    account     text NOT NULL,\n    direction   text NOT NULL CHECK (direction IN ('debit', 'credit')),\n    amount      numeric(14,2) NOT NULL,\n    currency    text,\n    created_at  timestamptz NOT NULL DEFAULT now()\n);\nCREATE INDEX IF NOT EXISTS ledger_entries_payment_idx ON ledger_entries (payment_id);\n\nINSERT INTO merchants (id, name, country, segment, tier, mcc) VALUES\n    ('thai-airways',    'Thai Airways',                   'TH', 'airline',       'enterprise', '3077'),\n    ('lazada-th',       'Lazada Thailand (marketplace)',  'TH', 'ecommerce',     'enterprise', '5399'),\n    ('grab',            'Grab (ride hailing)',            'TH', 'mobility',      'enterprise', '4121'),\n    ('cafe-amazon',     'Caf\u00e9 Amazon (F&B chain)',        'TH', 'fnb',           'sme',        '5814'),\n    ('centara-hotels',  'Centara Hotels & Resorts',       'TH', 'hospitality',   'standard',   '7011'),\n    ('garena',          'Garena (digital goods)',         'TH', 'digital_goods', 'standard',   '5816')\nON CONFLICT (id) DO NOTHING;\n"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_USER
+          value: tuktukpay
+        - name: POSTGRES_PASSWORD
+          value: tuktukpay
+        - name: POSTGRES_DB
+          value: tuktukpay
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+      volumes:
+      - name: init
+        configMap:
+          name: tuktukpay-db-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        args:
+        - --save
+        - ''
+        - --appendonly
+        - 'no'
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaos-controller
+  namespace: ${NAMESPACE}
+  labels:
+    app: chaos-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chaos-controller
+  template:
+    metadata:
+      labels:
+        app: chaos-controller
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: chaos-controller
+        image: ${IMAGE_REGISTRY}/tuktukpay-chaos-controller:latest
+        imagePullPolicy: IfNotPresent
+        env: []
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        ports:
+        - containerPort: 8090
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chaos-controller
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: chaos-controller
+  ports:
+  - port: 8090
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: ${NAMESPACE}
+  labels:
+    app: checkout-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkout-api
+  template:
+    metadata:
+      labels:
+        app: checkout-api
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: checkout-api
+        image: ${IMAGE_REGISTRY}/tuktukpay-checkout-api:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_SERVICE_NAME
+          value: checkout-api
+        - name: PORT
+          value: '8080'
+        - name: RISK_URL
+          value: http://risk-engine:8081
+        - name: ROUTER_URL
+          value: http://payment-router:8082
+        - name: LEDGER_URL
+          value: http://ledger:8084
+        - name: WALLET_URL
+          value: http://wallet-sim:8088
+        - name: AMP_SHARED_SECRET
+          value: tuktukpay-amp-demo-secret
+        - name: REDIS_ADDR
+          value: redis:6379
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-api
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: checkout-api
+  ports:
+  - port: 8080
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-sim
+  namespace: ${NAMESPACE}
+  labels:
+    app: wallet-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wallet-sim
+  template:
+    metadata:
+      labels:
+        app: wallet-sim
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: wallet-sim
+        image: ${IMAGE_REGISTRY}/tuktukpay-wallet-sim:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: wallet-sim
+        - name: AMP_SHARED_SECRET
+          value: tuktukpay-amp-demo-secret
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - opentelemetry-instrument
+        - uvicorn
+        - wallet_sim:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8088'
+        - --no-access-log
+        ports:
+        - containerPort: 8088
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-sim
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: wallet-sim
+  ports:
+  - port: 8088
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopping-agent
+  namespace: ${NAMESPACE}
+  labels:
+    app: shopping-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shopping-agent
+  template:
+    metadata:
+      labels:
+        app: shopping-agent
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: shopping-agent
+        image: ${IMAGE_REGISTRY}/tuktukpay-wallet-sim:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: shopping-agent
+        - name: CHECKOUT_URL
+          value: http://checkout-api:8080
+        - name: WALLET_URL
+          value: http://wallet-sim:8088
+        - name: MERCHANT_SIM_URL
+          value: http://merchant-sim:8085
+        - name: AMP_SHARED_SECRET
+          value: tuktukpay-amp-demo-secret
+        - name: AGENT_PROVIDER
+          value: mock
+        - name: CONSOLE_SPLUNK_REALM
+          value: ${SPLUNK_REALM}
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - opentelemetry-instrument
+        - uvicorn
+        - shopping_agent:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8087'
+        - --no-access-log
+        ports:
+        - containerPort: 8087
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopping-agent
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: shopping-agent
+  ports:
+  - port: 8087
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-engine
+  namespace: ${NAMESPACE}
+  labels:
+    app: risk-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: risk-engine
+  template:
+    metadata:
+      labels:
+        app: risk-engine
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: risk-engine
+        image: ${IMAGE_REGISTRY}/tuktukpay-risk-engine:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: risk-engine
+        resources:
+          requests:
+            cpu: 200m
+            memory: 192Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+        ports:
+        - containerPort: 8081
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-engine
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: risk-engine
+  ports:
+  - port: 8081
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-router
+  namespace: ${NAMESPACE}
+  labels:
+    app: payment-router
+  annotations:
+    tuktukpay/note: Java agent injected by the OpenTelemetry Operator (zero-code);
+      the image itself has no JAVA_TOOL_OPTIONS here
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-router
+  template:
+    metadata:
+      labels:
+        app: payment-router
+        app.kubernetes.io/part-of: tuktukpay
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: splunk-otel/splunk-otel-collector
+    spec:
+      containers:
+      - name: payment-router
+        image: ${IMAGE_REGISTRY}/tuktukpay-payment-router:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_SERVICE_NAME
+          value: payment-router
+        - name: ACQUIRER_URL
+          value: http://acquirer-sim:8083
+        - name: PORT
+          value: '8082'
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: SPLUNK_PROFILER_MEMORY_ENABLED
+          value: 'true'
+        - name: OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS
+          value: x-payment-acquirer,x-route-attempts,x-route-failover,x-route-outcome
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        ports:
+        - containerPort: 8082
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-router
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: payment-router
+  ports:
+  - port: 8082
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquirer-sim
+  namespace: ${NAMESPACE}
+  labels:
+    app: acquirer-sim
+  annotations:
+    tuktukpay/note: 'Plain `node server.js`: the operator injects NODE_OPTIONS with
+      the Splunk Node.js instrumentation'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: acquirer-sim
+  template:
+    metadata:
+      labels:
+        app: acquirer-sim
+        app.kubernetes.io/part-of: tuktukpay
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: splunk-otel/splunk-otel-collector
+    spec:
+      containers:
+      - name: acquirer-sim
+        image: ${IMAGE_REGISTRY}/tuktukpay-acquirer-sim:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_SERVICE_NAME
+          value: acquirer-sim
+        - name: PORT
+          value: '8083'
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - node
+        - server.js
+        ports:
+        - containerPort: 8083
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquirer-sim
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: acquirer-sim
+  ports:
+  - port: 8083
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  namespace: ${NAMESPACE}
+  labels:
+    app: ledger
+  annotations:
+    tuktukpay/note: Swap image to ledger-dotnet + command [dotnet, Ledger.dll] + inject-dotnet
+      annotation for the .NET variant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger
+  template:
+    metadata:
+      labels:
+        app: ledger
+        app.kubernetes.io/part-of: tuktukpay
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: splunk-otel/splunk-otel-collector
+    spec:
+      containers:
+      - name: ledger
+        image: ${IMAGE_REGISTRY}/tuktukpay-ledger:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_SERVICE_NAME
+          value: ledger
+        - name: PORT
+          value: '8084'
+        - name: PG_POOL_SIZE
+          value: '10'
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: tuktukpay-db
+              key: DATABASE_URL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - node
+        - server.js
+        ports:
+        - containerPort: 8084
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: ledger
+  ports:
+  - port: 8084
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: merchant-sim
+  namespace: ${NAMESPACE}
+  labels:
+    app: merchant-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: merchant-sim
+  template:
+    metadata:
+      labels:
+        app: merchant-sim
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: merchant-sim
+        image: ${IMAGE_REGISTRY}/tuktukpay-webhook-dispatcher:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: merchant-sim
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - opentelemetry-instrument
+        - uvicorn
+        - merchant_sim:app
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8085'
+        - --no-access-log
+        ports:
+        - containerPort: 8085
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: merchant-sim
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: merchant-sim
+  ports:
+  - port: 8085
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-dispatcher
+  namespace: ${NAMESPACE}
+  labels:
+    app: webhook-dispatcher
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webhook-dispatcher
+  template:
+    metadata:
+      labels:
+        app: webhook-dispatcher
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: webhook-dispatcher
+        image: ${IMAGE_REGISTRY}/tuktukpay-webhook-dispatcher:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: webhook-dispatcher
+        - name: REDIS_URL
+          value: redis://redis:6379/0
+        - name: MERCHANT_SIM_URL
+          value: http://merchant-sim:8085
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        command:
+        - opentelemetry-instrument
+        - python
+        - worker.py
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: merchant-copilot
+  namespace: ${NAMESPACE}
+  labels:
+    app: merchant-copilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: merchant-copilot
+  template:
+    metadata:
+      labels:
+        app: merchant-copilot
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: merchant-copilot
+        image: ${IMAGE_REGISTRY}/tuktukpay-merchant-copilot:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: merchant-copilot
+        - name: LEDGER_URL
+          value: http://ledger:8084
+        - name: COPILOT_PROVIDER
+          value: mock
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi
+        ports:
+        - containerPort: 8086
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: merchant-copilot
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: merchant-copilot
+  ports:
+  - port: 8086
+    targetPort: http
+    name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: merchant-storefront
+  namespace: ${NAMESPACE}
+  labels:
+    app: merchant-storefront
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: merchant-storefront
+  template:
+    metadata:
+      labels:
+        app: merchant-storefront
+        app.kubernetes.io/part-of: tuktukpay
+    spec:
+      containers:
+      - name: merchant-storefront
+        image: ${IMAGE_REGISTRY}/tuktukpay-loadgen:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
+        - name: SPLUNK_OTEL_AGENT
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+        - name: OTEL_PROPAGATORS
+          value: tracecontext,baggage
+        - name: CHAOS_URL
+          value: http://chaos-controller:8090
+        - name: OTEL_PYTHON_LOG_CORRELATION
+          value: 'true'
+        - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
+          value: chaos-controller
+        - name: OTEL_PYTHON_EXCLUDED_URLS
+          value: healthz
+        - name: SPLUNK_PROFILER_ENABLED
+          value: 'true'
+        - name: OTEL_SERVICE_NAME
+          value: merchant-storefront
+        - name: CHECKOUT_URL
+          value: http://checkout-api:8080
+        - name: COPILOT_URL
+          value: http://merchant-copilot:8086
+        - name: BASE_RPS
+          value: '4'
+        - name: AMP_SHARED_SECRET
+          value: tuktukpay-amp-demo-secret
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 768Mi

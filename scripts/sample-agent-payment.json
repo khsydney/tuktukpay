@@ -1,0 +1,10 @@
+{
+  "merchant_id": "lazada-th",
+  "amount": 128.00,
+  "currency": "SGD",
+  "payment_method": "card",
+  "card": {"bin": "424242", "last4": "4242", "network": "visa"},
+  "customer": {"id": "cus_00777", "country": "SG"},
+  "order_id": "ORD-LAZO-AGENT-1",
+  "channel": "api"
+}
