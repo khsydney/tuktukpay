@@ -119,7 +119,7 @@ flowchart LR
 
 | Service | Language | Instrumentation | Port | Role |
 |---|---|---|---|---|
-| `checkout-api` | Go 1.24 | OTel SDK, manual | 8080 | Public payments API; verifies agent mandates |
+| [`checkout-api`](services/checkout-api/README.md) | Go 1.24 | OTel SDK, manual | 8080 | Public payments API; verifies agent mandates |
 | `risk-engine` | Python / FastAPI | zero-code | 8081 | ML fraud scoring (model v2, canary v3) |
 | `payment-router` | Java 21 | Splunk Java agent, zero-code | 8082 | Picks the acquirer, fails over on timeout |
 | `acquirer-sim` | Node.js / Express | `@splunk/otel`, zero-code | 8083 | 5 simulated acquirers / wallet / QR rails |
