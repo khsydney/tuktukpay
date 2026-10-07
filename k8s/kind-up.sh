@@ -26,9 +26,17 @@ kubectl config use-context "kind-$CLUSTER" >/dev/null
 echo "== building images with docker compose"
 ( cd "$ROOT" && docker compose build $SERVICES )
 echo "== loading images into kind"
+# Remember which images actually changed on the node: the manifests use a fixed `latest` tag with
+# imagePullPolicy IfNotPresent, so a rebuilt image never restarts a running pod by itself.
+NODE="$CLUSTER-control-plane"
+CHANGED=""
 for s in $SERVICES; do
-  docker tag "tuktukpay-workshop-$s:latest" "tuktukpay-workshop/tuktukpay-$s:latest"
-  kind load docker-image "tuktukpay-workshop/tuktukpay-$s:latest" --name "$CLUSTER"
+  img="tuktukpay-workshop/tuktukpay-$s:latest"
+  before=$(docker exec "$NODE" crictl images -q "docker.io/$img" 2>/dev/null || true)
+  docker tag "tuktukpay-workshop-$s:latest" "$img"
+  kind load docker-image "$img" --name "$CLUSTER"
+  after=$(docker exec "$NODE" crictl images -q "docker.io/$img" 2>/dev/null || true)
+  if [ -n "$before" ] && [ "$before" != "$after" ]; then CHANGED="$CHANGED $s"; fi
 done
 
 echo "== installing the Splunk OTel Collector chart + OpenTelemetry Operator"
@@ -54,6 +62,16 @@ kubectl -n splunk-otel wait --for=condition=available deployment -l app.kubernet
 
 echo "== deploying TukTukPay ($NAMESPACE / $DEPLOYMENT_ENVIRONMENT)"
 IMAGE_REGISTRY=tuktukpay-workshop NAMESPACE="$NAMESPACE" DEPLOYMENT_ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" "$DIR/apply.sh"
+if [ -n "$CHANGED" ]; then
+  # Code changed: restart exactly the deployments whose image changed, so "edit, run kind-up.sh"
+  # works for code the same way apply.sh makes it work for .env (chaos flags reset with the controller).
+  echo "== restarting deployments whose image changed:$CHANGED"
+  for s in $CHANGED; do
+    # image -> deployment(s): loadgen runs as merchant-storefront; the wallet-sim image also runs the agent console
+    case $s in loadgen) deps=merchant-storefront ;; wallet-sim) deps="wallet-sim shopping-agent" ;; *) deps=$s ;; esac
+    for d in $deps; do kubectl -n "$NAMESPACE" rollout restart "deployment/$d" >/dev/null 2>&1 || true; done
+  done
+fi
 kubectl -n "$NAMESPACE" rollout status deployment --timeout=300s 2>/dev/null || kubectl -n "$NAMESPACE" get pods
 echo
 echo "UIs + API:    http://localhost:8090 (war room), :8087 (agent console), :8080 (payments), :8086 (copilot) — direct via NodePorts"
@@ -61,3 +79,4 @@ echo "              (other clusters without the kind port mappings: k8s/port-for
 echo "smoke test:   scripts/smoke-test.sh"
 echo "K8s acts:     act6 / act7 from the panel; k8s/acts/oversize-rollout.sh, k8s/acts/bad-image.sh, k8s/acts/rollback.sh"
 echo "tear down:    kind delete cluster --name $CLUSTER"
+echo "stay awake:   make awake — a sleeping laptop (closed lid, idle timer) freezes the whole cluster; wake = DNS blips + maybe a new VPN IP for the HEC allow list"

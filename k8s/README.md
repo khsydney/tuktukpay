@@ -117,6 +117,11 @@ when either object changed the application pods are rolled (Postgres and Redis a
 `.env` is the same as on Compose: run `k8s/kind-up.sh` (or `make k8s-up`). Explicit `env` entries in the manifest take
 precedence over `envFrom`, which is why the per-service values were removed from `tuktukpay.yaml`.
 
+The same command picks up **code changes**: the images are rebuilt and loaded, and the deployments whose image actually changed
+on the node are restarted (the manifests use a fixed `latest` tag with `IfNotPresent`, so a rebuilt image would otherwise keep the
+old container running — that bit us on 7 Oct). A restart of `chaos-controller` resets the flags and the traffic switch; start the
+act again afterwards.
+
 ## Notes
 
 * In `tuktukpay.yaml` the `SPLUNK_OTEL_AGENT` (node IP) variable must stay **first** in every container's `env` list: Kubernetes only
@@ -129,10 +134,16 @@ precedence over `envFrom`, which is why the per-service values were removed from
 * On kind/minikube the kubelet's self-signed certificate makes the `kubelet_stats` scrape fail silently (no container CPU/memory
   metrics, so the memory/CPU detectors and the pod charts stay empty); the values set `insecure_skip_verify: true` for it. Remove
   that on EKS/GKE/AKS.
+* A laptop that sleeps (lid closed, idle timer) freezes the Docker Desktop VM and with it the whole cluster: every signal stops
+  in the same minute and resumes on wake — followed by a minute of CoreDNS `no such host` errors and, on a VPN, usually a new
+  egress address (next bullet). `make awake` (`caffeinate -dimsu`) stops idle sleep; nothing stops clamshell sleep, so keep the
+  lid open during the session. `pmset -g log | grep -E "Sleep|Wake"` tells you afterwards what happened.
 * A laptop on a VPN: when the egress IP changes, the Splunk Cloud HEC allow list blocks the collector (`splunk_hec/platform_logs`
   timeouts, `sending queue is full`; `make hec-test` → `http 000`) until the new address is added, and kind's CoreDNS (which forwards
   to the host resolver) fails lookups for a few minutes (`lookup ingest.<realm>… no such host`), so traces and metrics show a gap
-  that heals on its own. Check with `kubectl -n splunk-otel logs ds/splunk-otel-collector-agent --since=10m | grep -c "Exporting failed"`.
+  that heals on its own. Check with `kubectl -n splunk-otel logs ds/splunk-otel-collector-agent --since=10m | grep -c "Exporting failed"`
+  and `make k8s-logs-status` (spans, metric points and log records sent / failed per exporter, read from the agent's own metrics
+  through a throw-away `hostNetwork` pod — the agent image has no shell and binds its metrics port to localhost).
 * Postgres and Redis are dev-grade Deployments here; use RDS/ElastiCache for anything longer than a workshop.
 * `deployment.environment` comes from the Helm value `environment`; the manifests also set it in `OTEL_RESOURCE_ATTRIBUTES`
   so the environment is consistent whichever path the telemetry takes.

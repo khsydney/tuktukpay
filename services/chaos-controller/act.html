@@ -161,7 +161,7 @@
   <nav class="dots" id="dots"></nav>
   <span class="live" id="live">Not running</span>
 </div>
-<div class="note" id="paused-note">⏸ Traffic is paused. Press <b>Resume traffic</b> on the <a href="/">controls page</a>, or Splunk will show nothing for this act.</div>
+<div class="note" id="paused-note">⏸ Traffic is paused, so Splunk shows nothing yet. <b>Start this act</b> resumes the traffic automatically — or press <b>Resume traffic</b> on the <a href="/">controls page</a>.</div>
 <main id="page"></main>
 <div class="keys"><kbd>←</kbd> <kbd>→</kbd> previous / next act · <kbd>A</kbd> show / hide the answer</div>
 <div class="actionbar">
@@ -847,25 +847,38 @@ function renderLive() {
   $('start').textContent = on ? '⟳ Restart this act' : '▶ Start this act';
   document.querySelectorAll('.dots a').forEach(a => a.classList.toggle('running', a.id === `dot-${running}`));
 }
+// Every request has an 8 s timeout: after the laptop wakes up, or while the controller pod
+// restarts, a hanging fetch would otherwise leave the buttons disabled for good.
+async function fetchT(path, options) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 8000);
+  try { return await fetch(path, { ...options, signal: ctl.signal }); } finally { clearTimeout(timer); }
+}
 async function poll() {
   try {
-    const [cur, traffic] = await Promise.all([fetch('/scenarios/current').then(r => r.json()), fetch('/traffic').then(r => r.json())]);
+    const [cur, traffic] = await Promise.all([fetchT('/scenarios/current').then(r => r.json()), fetchT('/traffic').then(r => r.json())]);
     running = cur.name; renderLive();
     $('paused-note').classList.toggle('show', !!traffic.paused);
   } catch (e) { /* controller restarting: keep last state */ }
 }
-// A failed call (tunnel dropped, controller restarting) is shown on the button for a few
-// seconds instead of being swallowed, so nobody keeps clicking a dead page.
+// A failed call (controller restarting, laptop network not back yet) is shown on the button for
+// a few seconds instead of being swallowed, so nobody keeps clicking a dead page. Starting an
+// act while traffic is paused resumes the traffic (the controller says so with traffic_resumed).
 async function call(button, label, path) {
   const original = button.textContent; button.disabled = true; button.textContent = `… ${label}`;
   try {
-    const res = await fetch(path, { method: 'POST' });
+    const res = await fetchT(path, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await poll(); button.textContent = original;
+    const data = await res.json().catch(() => ({}));
+    await poll();                                   // renderLive() refreshes the Start button's own label
+    if (button.id !== 'start') button.textContent = original;
+    if (data.traffic_resumed) {
+      button.textContent = '✓ started — traffic was paused, resumed';
+      setTimeout(() => { if (button.id === 'start') renderLive(); else button.textContent = original; }, 5000);
+    }
   } catch (e) {
     console.error(e);
     button.textContent = `⚠ controller unreachable — try again`;
-    setTimeout(() => { button.textContent = original; }, 4000);
+    setTimeout(() => { if (button.id === 'start') renderLive(); else button.textContent = original; }, 4000);
   } finally { button.disabled = false; }
 }
 async function startAct() { await call($('start'), 'starting', `/scenarios/${NAME}`); }

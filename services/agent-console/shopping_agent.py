@@ -220,15 +220,20 @@ class ToolContext:
             "order_id": f"ORD-AGENT-{uuid.uuid4().hex[:8].upper()}", "channel": "api",
             "metadata": {"sku": sku, "quantity": str(quantity), "task_id": m.get("task_id", ""), "agent": m["agent_id"]},
         }
-        res = http.post(f"{CHECKOUT_URL}/v1/payments", json=body, headers=headers)
-        out = res.json() if res.content else {"status": "error"}
-        out.update({"merchant_id": merchant_id, "sku": sku, "quantity": quantity, "amount": amount, "currency": body["currency"], "http_status": res.status_code})
+        try:
+            res = http.post(f"{CHECKOUT_URL}/v1/payments", json=body, headers=headers)
+            out = res.json() if res.content else {"status": "error"}
+            http_status = res.status_code
+        except httpx.HTTPError as exc:
+            # checkout-api down or not answering: a payment error the run can report, not a crashed task
+            out, http_status = {"status": "error", "decline_reason": "checkout_unreachable", "error": f"{type(exc).__name__}: {exc}"}, 0
+        out.update({"merchant_id": merchant_id, "sku": sku, "quantity": quantity, "amount": amount, "currency": body["currency"], "http_status": http_status})
         self.payment = out
         span = trace.get_current_span()
         span.set_attributes({"payment.id": out.get("payment_id", ""), "payment.outcome": out.get("status", "error"), "payment.amount": amount, "merchant.id": merchant_id})
         if out.get("decline_reason"):
             span.set_attribute("payment.decline_reason", out["decline_reason"])
-        if self.token and not str(out.get("decline_reason", "")).startswith("mandate_"):
+        if self.token and http_status and not str(out.get("decline_reason", "")).startswith("mandate_"):
             LAST_TOKENS.append(self.token)  # consumed (single use) -> a later replay must be refused
         return out
 
@@ -283,7 +288,20 @@ def run_task(task_id: str, req: RunRequest):
                 step("ATTACK: agent forges its own task token (10× budget) instead of asking the wallet", kind="attack")
             else:
                 ttl = 0 if attack == "expired" else spec.ttl_s
-                res = http.post(f"{WALLET_URL}/v1/mandates", json={**spec.model_dump(), "ttl_s": ttl})
+                try:
+                    res = http.post(f"{WALLET_URL}/v1/mandates", json={**spec.model_dump(), "ttl_s": ttl})
+                except httpx.HTTPError as exc:
+                    # Act 7: the wallet (KYA registry) is crash-looping. No mandate -> the agent fails closed;
+                    # say so instead of crashing the task with a bare connection error.
+                    detail = (f"wallet {spec.wallet} unreachable ({type(exc).__name__}) — the KYA registry is down, no mandate can be issued, "
+                              f"the agent fails closed. Under Act 7 this is the expected outcome.")
+                    s.set_status(Status(StatusCode.ERROR, "wallet unreachable"))
+                    s.set_attribute("amp.issue.outcome", "wallet_unreachable")
+                    step(f"Wallet {spec.wallet} UNREACHABLE: {detail}", kind="blocked")
+                    task.update({"status": "blocked", "outcome": "wallet_unreachable", "detail": detail, "ended": time.time()})
+                    tasks_counter.add(1, {"outcome": "wallet_unreachable", "agent.id": spec.agent_id})
+                    agent_span.set_attribute("amp.outcome", "wallet_unreachable")
+                    return
                 if res.status_code >= 400:
                     detail = res.json().get("detail", res.text) if res.content else res.text
                     s.set_status(Status(StatusCode.ERROR, "mandate refused"))
@@ -375,6 +393,8 @@ def _narrate(step, name, args, output):
             step(f"TukTukPay: mandate verified, risk allowed, {output.get('acquirer')} approved — payment {output.get('payment_id')}", kind="ok")
         elif str(output.get("decline_reason", "")).startswith("mandate_"):
             step(f"TukTukPay BLOCKED the payment at mandate verification: {output.get('decline_reason')} ({output.get('mandate_detail', '')})", kind="blocked")
+        elif output.get("decline_reason") == "checkout_unreachable":
+            step(f"TukTukPay (checkout-api) is UNREACHABLE: {output.get('error', '')} — no payment was made", kind="blocked")
         else:
             step(f"TukTukPay declined: {output.get('status')} / {output.get('decline_reason')}", kind="blocked")
 
@@ -393,8 +413,14 @@ def config():
 
 @app.get("/v1/agents")
 def agents():
-    res = http.get(f"{WALLET_URL}/v1/agents")
-    return res.json()
+    # The wallet is the KYA registry and the very service Act 7 crash-loops: answer with JSON the
+    # console can show and retry on, not a bare 500.
+    try:
+        res = http.get(f"{WALLET_URL}/v1/agents")
+        res.raise_for_status()
+        return res.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, f"KYA registry (wallet-sim at {WALLET_URL}) unreachable: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/v1/tasks")

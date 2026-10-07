@@ -179,8 +179,10 @@ HISTORY: list[dict] = []
 # /reset and by any manual flag change (the state no longer matches the preset).
 CURRENT_SCENARIO: dict = {"name": None}
 
-# Traffic on/off for the load generator. Kept outside STATE on purpose: scenarios and
-# /reset switch every failure injection off, and they must not silently restart traffic.
+# Traffic on/off for the load generator. Kept outside STATE on purpose: /reset and individual
+# flag changes never touch it. Starting a scenario DOES resume paused traffic — an act with the
+# traffic switched off shows nothing in Splunk, which every facilitator so far has read as "the
+# button does not work" — and says so in the history and in the response (`traffic_resumed`).
 # Published to services as a pseudo-flag `traffic_paused` in GET /flags.
 TRAFFIC_FILE = STATE_FILE.with_name("traffic-state.json")
 
@@ -235,14 +237,18 @@ def get_traffic():
     return TRAFFIC
 
 
-@app.post("/traffic")
-def set_traffic(update: TrafficUpdate):
-    TRAFFIC["paused"] = update.paused
+def _set_traffic(paused: bool, by: str) -> None:
+    TRAFFIC["paused"] = paused
     try:
         TRAFFIC_FILE.write_text(json.dumps(TRAFFIC))
     except Exception:  # noqa: BLE001
         pass
-    _log("traffic", {"flag": "paused" if update.paused else "resumed"})
+    _log("traffic", {"flag": "paused" if paused else "resumed", "by": by})
+
+
+@app.post("/traffic")
+def set_traffic(update: TrafficUpdate):
+    _set_traffic(update.paused, by="traffic button")
     return TRAFFIC
 
 
@@ -297,7 +303,11 @@ def run_scenario(name: str):
     CURRENT_SCENARIO["name"] = name
     _save()
     _log("scenario", {"scenario": name})
-    return {"scenario": name, "title": SCENARIOS[name]["title"], "flags": _published_flags()}
+    resumed = TRAFFIC["paused"]
+    if resumed:
+        _set_traffic(False, by=f"start of {name}")
+    return {"scenario": name, "title": SCENARIOS[name]["title"], "flags": _published_flags(),
+            "traffic": dict(TRAFFIC), "traffic_resumed": resumed}
 
 
 @app.get("/history")

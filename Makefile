@@ -2,7 +2,7 @@
 COMPOSE ?= docker compose
 CHAOS   ?= http://localhost:8090
 
-.PHONY: up down restart logs ps smoke pause resume reset act1 act2 act3 act4 act5 act6 act7 baseline dotnet dualship flags hec-test logs-status k8s-up k8s-forward k8s-down
+.PHONY: up down restart logs ps smoke pause resume reset act1 act2 act3 act4 act5 act6 act7 baseline dotnet dualship flags hec-test logs-status k8s-up k8s-forward k8s-down k8s-logs-status awake
 
 # ---- Kubernetes (the reference deployment) ----
 k8s-up:        ## create/update the kind cluster, build + load images, install the Splunk collector chart, deploy
@@ -11,6 +11,13 @@ k8s-forward:   ## port-forward the UIs/APIs to localhost (not needed on kind: po
 	k8s/port-forward.sh
 k8s-down:      ## delete the kind cluster
 	k8s/port-forward.sh stop; kind delete cluster --name $${CLUSTER:-tuktukpay}
+k8s-logs-status: ## spans / metric points / log records the collector agent has sent or failed to send, per exporter
+	@kubectl -n splunk-otel run otel-metrics-$$$$ --rm -i --quiet --restart=Never --image=curlimages/curl:8.10.1 \
+	  --overrides='{"spec":{"hostNetwork":true}}' --command -- curl -s -m 5 http://127.0.0.1:8889/metrics \
+	  | grep -E '^otelcol_exporter_(sent|send_failed|enqueue_failed)_(spans|metric_points|log_records)|^otelcol_exporter_queue_size' \
+	  | sed -E 's/\{[^}]*exporter="([^"]*)"[^}]*\}/ [\1]/' | sort || echo "collector agent metrics not reachable"
+awake:         ## keep the Mac from idle-sleeping while the demo runs (a closed lid still sleeps it); Ctrl-C to stop
+	caffeinate -dimsu
 
 # ---- Docker Compose (alternative) ----
 up:            ## build + start everything

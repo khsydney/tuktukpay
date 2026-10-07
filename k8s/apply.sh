@@ -19,6 +19,7 @@ ROOT=$(cd "$DIR/.." && pwd)
 sed -e "s#\${IMAGE_REGISTRY}#${IMAGE_REGISTRY}#g" \
     -e "s#\${NAMESPACE}#${NAMESPACE}#g" \
     -e "s#\${DEPLOYMENT_ENVIRONMENT}#${DEPLOYMENT_ENVIRONMENT}#g" \
+    -e "s#\${SPLUNK_REALM}#${SPLUNK_REALM:-}#g" \
     -e "s#\${SERVICE_VERSION}#${SERVICE_VERSION}#g" "$DIR/tuktukpay.yaml" | kubectl apply -f -
 
 # Application settings (same names and defaults as docker-compose.yml / .env.example).

@@ -61,6 +61,8 @@
   .banner { display: none; margin: 16px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--amber); color: var(--amber); background: rgba(245, 158, 11, .08); font-size: 13px; }
   .banner.show { display: block; }
   .history { font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; max-height: 180px; overflow: auto; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; transition: .25s; background: #052e16; color: #86efac; border: 1px solid var(--green); border-radius: 10px; padding: 10px 16px; font-size: 13px; font-weight: 600; max-width: 90vw; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
 </style>
 </head>
 <body>
@@ -73,7 +75,7 @@
   </div>
 </header>
 <main>
-  <div class="banner" id="traffic-banner">Traffic is paused: the load generator sends no payments or copilot questions, so the laptop stays mostly idle. Storyline presets and failure injections will not show up in Splunk until you press <b>Resume traffic</b>. The agentic checkout console still works on demand.</div>
+  <div class="banner" id="traffic-banner">Traffic is paused: the load generator sends no payments or copilot questions, so the laptop stays mostly idle. Nothing shows up in Splunk until traffic runs again — <b>Run now</b> / <b>Start this act</b> on a storyline preset resumes it automatically; switching individual failure injections does not, so press <b>Resume traffic</b> for those. The agentic checkout console still works on demand.</div>
   <h2>Storyline presets</h2>
   <div class="acts" id="acts"></div>
 
@@ -87,16 +89,27 @@
   <h2>Recent actions</h2>
   <div class="history" id="history"></div>
 </main>
+<div class="toast" id="toast" role="status"></div>
 <script>
 const $ = (id) => document.getElementById(id);
 let defs = {}, state = {}, scenarios = {}, traffic = { paused: false };
 
-// Every call to the controller goes through api(): a failed request (tunnel dropped, pod
-// restarting) is shown in the status line instead of silently freezing the page.
+// Every call to the controller goes through api(): a failed or hanging request (the laptop just
+// woke up and Docker is re-plumbing localhost, the controller pod is restarting) is reported in
+// the status line instead of silently freezing the page. 8 s is ~4000× the normal answer time.
 async function api(path, options) {
-  const res = await fetch(path, options);
-  if (!res.ok) throw new Error(`${options && options.method || 'GET'} ${path} -> HTTP ${res.status}`);
-  return res.json();
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(path, { ...options, signal: ctl.signal });
+    if (!res.ok) throw new Error(`${options && options.method || 'GET'} ${path} -> HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    throw e.name === 'AbortError' ? new Error(`${path} did not answer within 8 s`) : e;
+  } finally { clearTimeout(timer); }
+}
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 7000);
 }
 function reportError(e) {
   const el = $('status');
@@ -184,8 +197,13 @@ async function runScenario(name) {
   try {
     const res = await post(`/scenarios/${name}`);
     state = res.flags; renderFlags(); clearError();
+    traffic.paused = !!(res.traffic && res.traffic.paused); renderTraffic();
     document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
     $(`act-${name}`).classList.add('active');
+    const head = (res.title || name).split(' — ')[0];
+    toast(res.traffic_resumed
+      ? `${head} started. Traffic was paused, so it was resumed — payments flow again within seconds.`
+      : `${head} started — the services pick the flags up within 2 s.`);
   } catch (e) { reportError(e); } finally { if (btn) { btn.disabled = false; btn.textContent = '▶ Run now'; } }
   loadHistory();
 }
@@ -199,7 +217,7 @@ async function resetAll() {
 async function loadHistory() {
   try {
     const h = await api('/history');
-    $('history').innerHTML = h.slice().reverse().map(e => `${e.ts} · ${e.action} ${e.flag || e.scenario || ''}`).join('<br>') || 'no actions yet';
+    $('history').innerHTML = h.slice().reverse().map(e => `${e.ts} · ${e.action} ${e.flag || e.scenario || ''}${e.by ? ` (${e.by})` : ''}`).join('<br>') || 'no actions yet';
   } catch (e) { reportError(e); }
 }
 

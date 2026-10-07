@@ -247,8 +247,9 @@ waits for the rollout. First run ≈ 5–8 minutes; re-running it is safe (it re
 release).
 
 **Changed `.env`?** Run `k8s/kind-up.sh` (or `make k8s-up`) again: Splunk/HEC values go to the collector chart, the
-application values to the ConfigMap/Secret, and the application pods are rolled when those changed. The same works
-after a code change (the image is rebuilt and loaded; restart the deployment if its manifest did not change).
+application values to the ConfigMap/Secret, and the application pods are rolled when those changed. The same command
+applies a code change: the images are rebuilt and loaded, and the deployments whose image actually changed are restarted
+(a `chaos-controller` restart resets the flags and the traffic switch — start the act again afterwards).
 
 ### Step 4 — Check that everything is running
 
@@ -302,6 +303,13 @@ make resume                       # start traffic again
 make reset                        # every failure flag off
 kind delete cluster --name tuktukpay    # or: make k8s-down — removes the whole cluster
 ```
+
+The traffic switch (top-right button of the panel, `make pause` / `make resume`) is separate from the failure flags: while it is
+off, the load generator sends nothing, so **no act shows up in Splunk**. Starting an act — "Run now", "Start this act" or
+`make act1` … `make act7` — therefore resumes traffic automatically and records it in the panel history ("traffic resumed
+(start of act6)"); `make reset` and switching individual flags leave the switch alone. And keep the laptop awake: closing the
+lid sleeps the Mac, which freezes the Docker Desktop VM and with it every pod — traces, metrics and logs all stop at once and
+resume on wake. `make awake` runs `caffeinate` against idle sleep; a closed lid still sleeps the machine.
 
 ---
 
@@ -405,6 +413,8 @@ curl -s -X POST localhost:8086/v1/ask -H 'Content-Type: application/json' \
 | `make pause` / `make resume` | stop / restart simulated traffic |
 | `make baseline`, `make act1` … `make act7`, `make reset` | storyline presets |
 | `make hec-test` | send one test event to the Splunk Cloud HEC configured in `.env` |
+| `make k8s-logs-status` | spans / metric points / log records the collector agent sent or failed to send, per exporter |
+| `make awake` | keep the Mac from idle-sleeping during the session (`caffeinate`); a closed lid still sleeps it |
 | `make up` / `make down` / `make ps` / `make logs` / `make logs-status` | the Docker Compose equivalents |
 
 ---
@@ -451,6 +461,10 @@ SPLUNK_HEC_INDEX=tuktukpay
 | Traces missing from APM on Kubernetes | Check `kubectl -n tuktukpay logs deploy/risk-engine` for `Failed to export … $(SPLUNK_OTEL_AGENT)`: in `k8s/tuktukpay.yaml` the `SPLUNK_OTEL_AGENT` variable must stay first in every `env` list |
 | No container CPU / memory in the Kubernetes navigator | On kind/minikube the `kubelet_stats` scrape needs `insecure_skip_verify` (set in `k8s/values-splunk-otel-collector.yaml`); `helm upgrade` complaining about a renamed component means the chart moved on — see k8s/README.md |
 | Build is very slow or containers restart | Give Docker at least 4 CPUs / 8 GB RAM; on a small laptop use `make pause` between scenarios |
+| Agent console: every run — presets and simulation buttons alike — ends in "agent  is not registered" with an **empty** agent | The page loaded its agent list while wallet-sim (the KYA registry) was down — Act 7 crash-loops it — and kept the empty list. The console now retries the registry every 5 s, offers the preset agents meanwhile and shows a banner; on an older page, reload once the wallet is back |
+| Agent console runs end in "Wallet unreachable — the agent failed closed" (older build: `Error — Connection refused`) | Act 7 is running: the wallet *is* the KYA registry, so no mandate can be issued and the agent fails closed — that is the act. Reset it from the panel to get purchases again (under Act 6, payments can fail at the ledger write instead) |
+| An act is started but nothing changes in Splunk | Traffic was paused (amber pill top-right, banner on the panel): the acts only set failure flags, the load generator was idle. Starting an act now resumes traffic by itself; switching an individual flag does not — press **Resume traffic** |
+| Traces, metrics **and** logs all stop at the same minute and come back later together | The laptop slept (lid closed, idle sleep): the Docker Desktop VM — and so the whole kind cluster — was frozen; `pmset -g log \| grep -E "Sleep\|Wake"` shows when. Expect ~1 min of `no such host` DNS errors in the collector after the wake and check the HEC allow list if the VPN reconnected with a new IP. `make awake` prevents idle sleep |
 | Logs stop arriving in Splunk Cloud; collector logs say `splunk_hec/platform_logs … Client.Timeout exceeded` / `sending queue is full`; `make hec-test` prints `[http 000]` | Your laptop's public IP changed (VPN reconnect, new network) and is no longer in the Splunk Cloud **HEC access for ingestion** allow list. `curl -s https://api.ipify.org` shows the new address; add it (Splunk Cloud → Settings → Server settings → IP allow list). Logs produced while blocked are dropped after the 120 s retry cap; new ones flow within a minute of the change |
 | A gap of a few minutes in APM / traces right after a VPN or Wi-Fi change | kind's CoreDNS forwards to the laptop's resolver; while that resolver is switching, the collector logs `lookup ingest.<realm>… no such host` and drops spans after its retries. It recovers by itself — nothing to restart |
 | Port already in use | Another process uses 8080–8090 or 4317/4318; stop it or change the host port in `k8s/kind-config.yaml` (needs a cluster recreate) / `docker-compose.yml` |

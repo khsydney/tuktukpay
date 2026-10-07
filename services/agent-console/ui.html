@@ -36,7 +36,9 @@
   .timeline li time { color:var(--muted); font-variant-numeric: tabular-nums; font-size:12px; }
   .timeline li.ok { border-left-color:var(--green); } .timeline li.blocked { border-left-color:var(--red); } .timeline li.attack { border-left-color:var(--amber); } .timeline li.warn { border-left-color:var(--amber); }
   .outcome { margin-top:12px; padding:12px 14px; border-radius:8px; font-size:14px; }
-  .outcome.purchased { background:#0f3d3b; } .outcome.blocked_by_mandate, .outcome.mandate_refused_by_wallet, .outcome.payment_declined, .outcome.error { background:#4a1d1d; }
+  .outcome.purchased { background:#0f3d3b; } .outcome.blocked_by_mandate, .outcome.mandate_refused_by_wallet, .outcome.wallet_unreachable, .outcome.payment_declined, .outcome.payment_error, .outcome.error { background:#4a1d1d; }
+  .banner { display:none; grid-column: 1 / -1; padding:10px 14px; border-radius:10px; border:1px solid var(--amber); color:var(--amber); background:rgba(245,158,11,.08); font-size:13px; }
+  .banner.show { display:block; }
   .outcome a { color:var(--teal); }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
   table a { color:var(--teal); }
@@ -44,7 +46,7 @@
   th { color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.06em; font-size:11px; }
   code { background:#0b1220; padding:1px 5px; border-radius:4px; font-size:12px; }
   .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; }
-  .pill.purchased { background:#0f3d3b; color:var(--green); } .pill.blocked_by_mandate, .pill.mandate_refused_by_wallet, .pill.payment_declined, .pill.error, .pill.payment_error { background:#4a1d1d; color:var(--red); } .pill.running, .pill.queued { background:#1d2b4f; color:#7dd3fc; } .pill.no_purchase { background:#3f3417; color:var(--amber); }
+  .pill.purchased { background:#0f3d3b; color:var(--green); } .pill.blocked_by_mandate, .pill.mandate_refused_by_wallet, .pill.wallet_unreachable, .pill.payment_declined, .pill.error, .pill.payment_error { background:#4a1d1d; color:var(--red); } .pill.running, .pill.queued { background:#1d2b4f; color:#7dd3fc; } .pill.no_purchase { background:#3f3417; color:var(--amber); }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
   .wide { grid-column: 1 / -1; }
 </style>
@@ -55,6 +57,7 @@
   <div class="sub">An AI agent buys on a consumer's behalf under an AMP-style pre-approved task mandate. Every run is one trace in Splunk APM.</div>
 </header>
 <main>
+  <div class="banner" id="note" role="status"></div>
   <section class="card">
     <h2><span>1</span>Consumer pre-approves a task (wallet issues the mandate)</h2>
     <div class="grid">
@@ -110,7 +113,7 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let cfg = {}, agents = {}, current = null, timer = null;
+let cfg = {}, agents = {}, current = null, timer = null, registryOk = false, currentPreset = 'flight', pollFailingSince = 0, polling = false;
 const PRESETS = {
   flight:     { intent: "Book the cheapest BKK to SIN economy flight for Friday morning", category: "flights", wallet: "truemoney", max_amount: 6000, currency: "THB", agent: "travelgenie.ai" },
   headphones: { intent: "Buy the best-rated noise-cancelling headphones under my budget", category: "electronics", wallet: "shopeepay", max_amount: 6500, currency: "THB", agent: "shopbot.lazada" },
@@ -121,17 +124,53 @@ const CAT_MERCHANTS = { flights: ["thai-airways"], hotels: ["centara-hotels"], e
 const ALL_MERCHANTS = ["thai-airways", "lazada-th", "centara-hotels", "garena", "cafe-amazon", "grab"];
 const WALLET_CCY = { truemoney: "THB", rabbitlinepay: "THB", shopeepay: "THB", dana: "IDR", gcash: "PHP", tng: "MYR", grabpay: "SGD" };
 
+// Every call has an 8 s timeout and throws on a non-2xx answer, so a dead or restarting backend
+// shows up as a message instead of a silently frozen page.
+async function api(path, options) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(path, { ...options, signal: ctl.signal });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || `${(options && options.method) || 'GET'} ${path} -> HTTP ${res.status}`);
+    return body;
+  } catch (e) {
+    throw e.name === 'AbortError' ? new Error(`${path} did not answer within 8 s`) : e;
+  } finally { clearTimeout(t); }
+}
+function note(msg) { const el = $('note'); el.textContent = msg || ''; el.classList.toggle('show', !!msg); }
+
+// The agent list comes from the wallet's KYA registry — and wallet-sim is exactly the service Act 7
+// crash-loops. So the list is retried until it answers, and meanwhile the preset agents are offered
+// so a run still carries an agent id (the wallet does the real check once it is back). A page that
+// loaded during the outage used to keep an empty list for good and send "" as the agent.
+async function loadAgents() {
+  try {
+    agents = await api('/v1/agents');
+    const selected = $('agent').value;
+    $('agent').innerHTML = Object.entries(agents).map(([id, a]) => `<option value="${id}">${id} — ${a.operator} · KYA ${a.rating}${a.registered ? '' : ' (not registered)'}</option>`).join('');
+    $('agent').value = agents[selected] ? selected : PRESETS[currentPreset].agent;
+    registryOk = true; note('');
+  } catch (e) {
+    registryOk = false;
+    if (!$('agent').options.length) {
+      $('agent').innerHTML = [...new Set(Object.values(PRESETS).map(p => p.agent))].map(id => `<option value="${id}">${id} — KYA registry unavailable, rating unknown</option>`).join('');
+      $('agent').value = PRESETS[currentPreset].agent;
+    }
+    note(`⚠ KYA registry unreachable: ${e.message}. wallet-sim is down — Act 7 crash-loops it on purpose — so agents fail closed until it is back. Retrying every 5 s.`);
+  }
+  return registryOk;
+}
 async function init() {
-  cfg = await fetch('/config').then(r => r.json());
-  agents = await fetch('/v1/agents').then(r => r.json()).catch(() => ({}));
-  $('agent').innerHTML = Object.entries(agents).map(([id, a]) => `<option value="${id}">${id} — ${a.operator} · KYA ${a.rating}${a.registered ? '' : ' (not registered)'}</option>`).join('');
+  cfg = await api('/config').catch(() => ({}));
+  await loadAgents();
   preset('flight');
   refreshLedger(); setInterval(refreshLedger, 4000);
+  setInterval(() => { if (!registryOk) loadAgents(); }, 5000);
 }
 function preset(name) {
-  const p = PRESETS[name];
+  const p = PRESETS[name]; currentPreset = name;
   $('intent').value = p.intent; $('category').value = p.category; $('wallet').value = p.wallet; $('max_amount').value = p.max_amount; $('currency').value = p.currency;
-  if (agents[p.agent]) $('agent').value = p.agent;
+  if ([...$('agent').options].some(o => o.value === p.agent)) $('agent').value = p.agent;
   syncMerchants();
 }
 function syncCurrency() { $('currency').value = WALLET_CCY[$('wallet').value] || 'SGD'; }
@@ -147,17 +186,34 @@ function spec() {
   };
 }
 async function run(attack) {
+  if (!registryOk) await loadAgents();            // the wallet may be back since the page loaded
   const s = spec();
   if (attack === 'unregistered') s.agent_id = 'promo-hunter-bot';
-  $('run').disabled = true;
-  const task = await fetch('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mandate: s, attack: attack || null }) }).then(r => r.json());
-  current = task.id;
-  $('runhead').textContent = `Run ${task.id} · agent ${task.agent_id}${attack ? ' · simulation: ' + attack : ''}`;
-  $('timeline').innerHTML = ''; $('outcome').innerHTML = '';
-  clearInterval(timer); timer = setInterval(poll, 500);
+  if (!s.agent_id) { note('⚠ No agent selected — the KYA registry has not answered yet, so there is nothing to pre-approve. Retrying…'); return; }
+  $('run').disabled = true; pollFailingSince = 0;
+  try {
+    const task = await api('/v1/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mandate: s, attack: attack || null }) });
+    current = task.id;
+    $('runhead').textContent = `Run ${task.id} · agent ${task.agent_id}${attack ? ' · simulation: ' + attack : ''}`;
+    $('timeline').innerHTML = ''; $('outcome').innerHTML = '';
+    clearInterval(timer); timer = setInterval(poll, 500);
+  } catch (e) {
+    $('run').disabled = false;
+    $('outcome').innerHTML = `<div class="outcome error"><b>The console did not take the task</b> — ${esc(e.message)}. The shopping-agent service is unreachable or restarting; try again in a few seconds.</div>`;
+  }
 }
 async function poll() {
-  const t = await fetch('/v1/tasks/' + current).then(r => r.json());
+  if (polling) return;                              // a slow answer must not pile up overlapping polls
+  polling = true; let t;
+  try { t = await api('/v1/tasks/' + current); pollFailingSince = 0; }
+  catch (e) {
+    pollFailingSince = pollFailingSince || Date.now();
+    if (Date.now() - pollFailingSince > 30000) {    // a restarting pod needs ~15 s; after 30 s give up visibly
+      clearInterval(timer); $('run').disabled = false;
+      $('outcome').innerHTML = `<div class="outcome error"><b>Lost contact with the console during the run</b> — ${esc(e.message)}</div>`;
+    }
+    return;
+  } finally { polling = false; }
   $('timeline').innerHTML = t.steps.map(s => `<li class="${s.kind || ''}"><time>${s.t}</time><div>${esc(s.text)}</div></li>`).join('');
   if (t.status === 'done' || t.status === 'blocked' || t.status === 'error') {
     clearInterval(timer); $('run').disabled = false;
@@ -168,9 +224,10 @@ async function poll() {
   }
 }
 function traceLink(id) { if (!id) return '—'; return cfg.trace_url_template ? `<a target="_blank" href="${cfg.trace_url_template.replace('{trace_id}', id)}">${id}</a>` : `<code>${id}</code>`; }
-function label(o) { return ({ purchased: 'Purchased', blocked_by_mandate: 'Blocked by TukTukPay mandate verification', mandate_refused_by_wallet: 'Wallet refused to issue a mandate', payment_declined: 'Payment declined', no_purchase: 'No purchase', error: 'Error' })[o] || o; }
+function label(o) { return ({ purchased: 'Purchased', blocked_by_mandate: 'Blocked by TukTukPay mandate verification', mandate_refused_by_wallet: 'Wallet refused to issue a mandate', wallet_unreachable: 'Wallet (KYA registry) unreachable — the agent failed closed', payment_declined: 'Payment declined', payment_error: 'Payment error', no_purchase: 'No purchase', error: 'Error' })[o] || o; }
 async function refreshLedger() {
-  const rows = await fetch('/v1/tasks?limit=25').then(r => r.json());
+  let rows;
+  try { rows = await api('/v1/tasks?limit=25'); } catch (e) { return; }   // keep the last table while the console is unreachable
   $('ledger').innerHTML = rows.map(t => {
     const kya = (t.mandate && t.mandate.kya_rating) || (agents[t.agent_id] ? agents[t.agent_id].rating : '?');
     const amt = t.payment && t.payment.amount != null ? `${t.payment.amount} / ${t.max_amount} ${t.currency}` : `— / ${t.max_amount} ${t.currency}`;
