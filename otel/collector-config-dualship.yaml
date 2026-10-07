@@ -50,7 +50,14 @@ processors:
       - context: log
         statements:
           - set(resource.attributes["com.splunk.source"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
-          - set(attributes["severity"], ConvertCase(severity_text, "lower")) where severity_text != nil
+          # severity text when the SDK sets it (Python, Java, Node, .NET) ...
+          - set(attributes["severity"], ConvertCase(severity_text, "lower")) where severity_text != nil and severity_text != ""
+          # ... otherwise from the OTel severity number (Go's slog bridge sets only the number)
+          - set(attributes["severity"], "debug") where attributes["severity"] == nil and severity_number >= 1 and severity_number <= 8
+          - set(attributes["severity"], "info") where attributes["severity"] == nil and severity_number >= 9 and severity_number <= 12
+          - set(attributes["severity"], "warn") where attributes["severity"] == nil and severity_number >= 13 and severity_number <= 16
+          - set(attributes["severity"], "error") where attributes["severity"] == nil and severity_number >= 17 and severity_number <= 20
+          - set(attributes["severity"], "critical") where attributes["severity"] == nil and severity_number >= 21
           - set(attributes["severity"], "warn") where attributes["severity"] == "warning"
           - set(attributes["severity"], "error") where attributes["severity"] == "severe" or attributes["severity"] == "err"
           - set(attributes["severity"], "critical") where attributes["severity"] == "fatal"
