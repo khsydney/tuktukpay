@@ -25,11 +25,19 @@ splunkObservability:
 # Docker Compose: trace_id, span_id, service.name, business fields), so container stdout
 # collection is switched off below to avoid every line arriving twice.
 splunkPlatform:
-  endpoint: https://http-inputs-<stack>.splunkcloud.com:443/services/collector   # GCP stacks: http-inputs.<stack>
-  token: <HEC token>                 # or --set splunkPlatform.token=$SPLUNK_HEC_TOKEN
+  # k8s/kind-up.sh fills these from SPLUNK_HEC_URL / SPLUNK_HEC_TOKEN / SPLUNK_HEC_INDEX in .env (--set);
+  # an empty endpoint keeps the Splunk Platform exporter off. Manual install:
+  #   --set splunkPlatform.endpoint=https://http-inputs-<stack>.splunkcloud.com:443/services/collector \
+  #   --set splunkPlatform.token=<HEC token> --set splunkPlatform.index=tuktukpay
+  endpoint: ""
+  token: ""
   index: tuktukpay
   logsEnabled: true
   metricsEnabled: false
+  # otherwise the exporter blocks the pipeline when the stack is unreachable (IP allow list)
+  retryOnFailure:
+    enabled: true
+    maxElapsedTime: 120s
 logsCollection:
   containers:
     enabled: false                   # apps send OTLP logs themselves; turn on for pod stdout of third-party images

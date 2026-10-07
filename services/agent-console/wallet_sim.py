@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from collections import deque
 
@@ -28,7 +29,36 @@ from tuktuk_logging import log_event, setup_logging
 
 log = setup_logging("wallet-sim")
 
-chaos = ChaosFlags(watch={"kya_registry_down"})
+chaos = ChaosFlags(watch={"kya_registry_down", "wallet_crash_loop"})
+
+
+def _crash_loop_watch():
+    """Act 7 (Kubernetes): with the `wallet_crash_loop` flag on, the process dies shortly after
+    start as if a schema migration in a new release had failed. Kubernetes restarts the pod
+    into CrashLoopBackOff (the AutoDetect "container restart count > 0" alert); Know-Your-Agent
+    lookups fail meanwhile and checkout-api fails closed for every AMP agent payment."""
+    time.sleep(4)  # let the pod come up and poll the flags once, like a service that fails on its first real request
+    while True:
+        if chaos.enabled("wallet_crash_loop"):
+            release = chaos.param("wallet_crash_loop", "release", "wallet-sim 1.7.0")
+            code = chaos.param("wallet_crash_loop", "exit_code", 3)
+            log_event(log, logging.CRITICAL, "service.crashed",
+                      f"FATAL: startup check failed after rollout {release}: KYA registry schema migration kya_agents_v2 did not apply "
+                      f"(relation \"kya_agents_v2\" does not exist); exiting with code {code}",
+                      **{"error.type": "SchemaMigrationError", "deployment.release": release, "process.exit_code": code, "peer.service": "kya-registry-db"})
+            try:  # give the OTLP log exporter a moment to ship the line before the process is gone
+                from opentelemetry._logs import get_logger_provider
+                flush = getattr(get_logger_provider(), "force_flush", None)
+                if flush:
+                    flush(timeout_millis=3000)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(1)
+            os._exit(int(code))
+        time.sleep(2)
+
+
+threading.Thread(target=_crash_loop_watch, name="crash-loop-watch", daemon=True).start()
 meter = metrics.get_meter("tuktukpay.wallet-sim")
 mandates_issued = meter.create_counter("tuktukpay.wallet.mandates_issued", description="Task mandates issued by the wallet")
 kya_lookups = meter.create_counter("tuktukpay.wallet.kya_lookups", description="Know-Your-Agent lookups by outcome")

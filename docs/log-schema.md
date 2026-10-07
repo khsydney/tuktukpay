@@ -102,7 +102,9 @@ act a line is evidence for; **bold** events are the smoking gun of that act.
 | `ledger.write_slow` | W | INSERT transaction > 500 ms | `duration_ms`, `db.pool.wait_ms` | 5 |
 | `ledger.write_failed` / `db.connect_failed` / `ledger.query_failed` | E | database errors | `error.type` (Postgres code), `error.message`, `peer.service=postgres` | — |
 | `ledger.entry_recorded` | D | healthy write | | — |
-| `config.changed` | I | `ledger_db_slow` flipped | `sleep_ms`, `pool_size` | 5 |
+| **`memory.pressure`** | W/E | every 5 s while `ledger_memory_leak` is on (E above 80% of the container limit) | `process.memory.rss_mb`, `memory.leaked_mb`, `container.memory.limit_mb`, `container.memory.utilization_pct`, `error.type` | **6** (Kubernetes) |
+| `memory.released` | I | the leak flag was switched off | | 6 |
+| `config.changed` | I | `ledger_db_slow` / `ledger_memory_leak` flipped | `sleep_ms`, `pool_size` / `mb_per_second`, `max_mb` | 5, 6 |
 
 ### webhook-dispatcher (Python)
 
@@ -147,7 +149,8 @@ act a line is evidence for; **bold** events are the smoking gun of that act.
 | `mandate.refused` | W | unregistered agent asked for a mandate | `agent.id` | 4 |
 | **`kya.registry_unavailable`** | E | Know-Your-Agent lookups fail (503) | `agent.id`, `peer.service=kya-registry-db`, `error.type=RegistryUnavailable` | **4b** |
 | `kya.agent_unknown` | W | lookup for an agent nobody registered | | 4 |
-| `config.changed` | I | `kya_registry_down` flipped | | 4b |
+| **`service.crashed`** | CRITICAL | `wallet_crash_loop` on: the process exits a few seconds after start (CrashLoopBackOff on Kubernetes) | `error.type=SchemaMigrationError`, `deployment.release`, `process.exit_code` | **7** (Kubernetes) |
+| `config.changed` | I | `kya_registry_down` / `wallet_crash_loop` flipped | | 4b, 7 |
 
 ### merchant-storefront (load generator)
 

@@ -223,6 +223,49 @@ for the AI Assistant, and the debrief line for the "human vs AI" comparison.
 * **Debrief:** run this act as a race: one half of the room may only use the AI Assistant and the Troubleshooting
   Agent, the other half anything but. Score root cause **and** evidence.
 
+### Kubernetes: the acts that earn a Remediation Plan (k8s/ variant)
+
+Remediation Plans only come with Kubernetes alerts, so the Kubernetes stack (`k8s/kind-up.sh`) adds incidents the cluster
+itself notices. Splunk's AutoDetect detectors cover them org-wide ("K8s container restart count is > 0", "K8s pod phase
+pending/failed", "K8s cluster deployment is not at spec"); `splunk/terraform/` adds environment-scoped twins with the pod and
+namespace dimensions the agent keys on. The playbook per act:
+
+**Act 6 — The leaky ledger** (`ledger_memory_leak`, ×2 traffic)
+* **Symptom:** the `ledger` pod's memory climbs ~6 MiB/s to its 384 MiB limit, is **OOMKilled**, restarts, and climbs again;
+  checkout-api logs `ledger.write_failed` while it is down; approvals continue (the ledger is off the critical path).
+* **Alerts:** *Kubernetes container restarted* (→ agent + Remediation Plan), *container memory above 85% of its limit*.
+* **Expected root cause:** a settlement cache in the ledger release does not evict; memory grows until the kernel kills the
+  container. Remediation: the plan will propose raising the limit or restarting/rolling back the release — the debrief point is
+  that raising the limit only buys minutes; the fix is the release.
+* **Evidence lines:** ledger `event=memory.pressure` ("ledger memory 310 MiB RSS of 384 MiB container limit (81%): settlement cache
+  holds 240 MiB and is not evicting", `memory.leaked_mb`, `container.memory.limit_mb`, `error.type=memory_limit_near`), then the
+  restart (`k8s.container.restarts`), checkout-api `event=ledger.write_failed peer.service=ledger`, ledger `config.changed
+  feature_flag.name=ledger_memory_leak`.
+* **Prompts:** *"The ledger pod in namespace tuktukpay keeps restarting. Why? Use the Kubernetes data and the ledger logs."* ·
+  *"Is the ledger memory growth a leak or load? Compare memory with request rate."* · *"What is the blast radius of the ledger
+  restarts on payments?"*
+
+**Act 7 — The bad rollout** (`wallet_crash_loop` + `agent_traffic_surge`)
+* **Symptom:** `wallet-sim` exits with code 3 a few seconds after every start → **CrashLoopBackOff**; Know-Your-Agent lookups
+  fail and every AMP agent payment is blocked `mandate_kya_unavailable`; human payments unaffected.
+* **Alerts:** *Kubernetes container restarted* (→ agent + Remediation Plan), *deployment below desired replicas*, `wallet-sim
+  error rate` / `checkout-api error rate` (APM) once traffic hits the dead service.
+* **Expected root cause:** release `wallet-sim 1.7.0` fails its startup check (schema migration `kya_agents_v2` missing) and exits;
+  Kubernetes restarts it with back-off. Remediation: roll back (`kubectl rollout undo deployment/wallet-sim`).
+* **Evidence lines:** wallet-sim `event=service.crashed` ("FATAL: startup check failed after rollout wallet-sim 1.7.0: KYA registry
+  schema migration kya_agents_v2 did not apply ... exiting with code 3", `error.type=SchemaMigrationError`, `deployment.release`,
+  `process.exit_code=3`); checkout-api `event=mandate.blocked mandate.block_reason=mandate_kya_unavailable peer.service=wallet-sim`.
+* **Prompts:** *"wallet-sim in namespace tuktukpay is in CrashLoopBackOff. What is the last thing it logged before exiting?"* ·
+  *"Which payments are affected by the wallet-sim restarts and what is the decline reason?"* · *"What is the safest remediation:
+  rollback or restart?"*
+
+**Script-driven rollouts** (no chaos flag): `k8s/acts/oversize-rollout.sh` leaves a `risk-engine` pod **Pending** (Insufficient
+memory) and `k8s/acts/bad-image.sh` a `merchant-copilot` pod in **ImagePullBackOff** — both keep the old pod serving, so they are
+pure Kubernetes incidents: *pod pending or failed* / *deployment below desired replicas* → agent → plan (`k8s/acts/rollback.sh`).
+
+**Act 2 on Kubernetes:** `risk-engine` has a 500m CPU limit; model v3 pins it. The *container CPU at its limit* detector fires next
+to the APM `risk-engine p90` alert, and the Remediation Plan proposes the limit change — the fix is still the model.
+
 ## 4. Facilitator checklist
 
 Before the day

@@ -34,11 +34,21 @@ done
 echo "== installing the Splunk OTel Collector chart + OpenTelemetry Operator"
 helm repo add splunk-otel-collector-chart https://signalfx.github.io/splunk-otel-collector-chart >/dev/null 2>&1 || true
 helm repo update >/dev/null
+# Logs -> Splunk Cloud Platform HEC (Log Observer Connect), same variables as Docker Compose (docs/logs-setup.md).
+HEC_ARGS=()
+if [ -n "${SPLUNK_HEC_URL:-}" ] && [ -n "${SPLUNK_HEC_TOKEN:-}" ]; then
+  HEC_ARGS=(--set "splunkPlatform.endpoint=$SPLUNK_HEC_URL" --set "splunkPlatform.token=$SPLUNK_HEC_TOKEN" --set "splunkPlatform.index=${SPLUNK_HEC_INDEX:-tuktukpay}")
+  echo "   logs -> $SPLUNK_HEC_URL (index ${SPLUNK_HEC_INDEX:-tuktukpay})"
+else
+  echo "   SPLUNK_HEC_URL/SPLUNK_HEC_TOKEN not set: logs stay in kubectl logs only"
+fi
 helm upgrade --install splunk-otel-collector splunk-otel-collector-chart/splunk-otel-collector \
   --namespace splunk-otel --create-namespace \
   --set splunkObservability.accessToken="$SPLUNK_ACCESS_TOKEN" \
   --set splunkObservability.realm="$SPLUNK_REALM" \
   --set clusterName="kind-$CLUSTER" \
+  --set environment="$DEPLOYMENT_ENVIRONMENT" \
+  "${HEC_ARGS[@]}" \
   -f "$DIR/values-splunk-otel-collector.yaml" --wait --timeout 5m
 kubectl -n splunk-otel wait --for=condition=available deployment -l app.kubernetes.io/name=opentelemetry-operator --timeout=180s 2>/dev/null || true
 
@@ -46,7 +56,7 @@ echo "== deploying TukTukPay ($NAMESPACE / $DEPLOYMENT_ENVIRONMENT)"
 IMAGE_REGISTRY=tuktukpay-workshop NAMESPACE="$NAMESPACE" DEPLOYMENT_ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" "$DIR/apply.sh"
 kubectl -n "$NAMESPACE" rollout status deployment --timeout=300s 2>/dev/null || kubectl -n "$NAMESPACE" get pods
 echo
-echo "chaos panel:  kubectl -n $NAMESPACE port-forward svc/chaos-controller 8090:8090   -> http://localhost:8090"
-echo "payments API: kubectl -n $NAMESPACE port-forward svc/checkout-api 8080:8080       -> scripts/smoke-test.sh"
-echo "copilot:      kubectl -n $NAMESPACE port-forward svc/merchant-copilot 8086:8086"
+echo "UIs + API:    k8s/port-forward.sh $NAMESPACE     -> http://localhost:8090 (war room), :8087 (agent console), :8080, :8086"
+echo "smoke test:   scripts/smoke-test.sh   (after the port-forwards)"
+echo "K8s acts:     act6 / act7 from the panel; k8s/acts/oversize-rollout.sh, k8s/acts/bad-image.sh, k8s/acts/rollback.sh"
 echo "tear down:    kind delete cluster --name $CLUSTER"

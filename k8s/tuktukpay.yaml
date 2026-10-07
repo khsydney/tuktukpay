@@ -745,7 +745,7 @@ spec:
             cpu: 100m
             memory: 192Mi
           limits:
-            memory: 768Mi
+            memory: 384Mi   # Act 6: the memory leak hits this limit -> OOMKilled -> restart (K8s alert + Remediation Plan)
         command:
         - node
         - server.js

@@ -306,6 +306,11 @@ Every flag can also be toggled individually (with parameters) on the controls pa
 
 ## Optional: Kubernetes
 
+Two presets exist only for Kubernetes, because that is where the AI Troubleshooting Agent's **Remediation Plan** appears:
+`act6` (a ledger memory leak → OOMKilled → restarts) and `act7` (a bad wallet-sim rollout → CrashLoopBackOff → agents fail
+closed), plus two script-driven rollouts (`k8s/acts/`). See [k8s/README.md](k8s/README.md) and
+[docs/ai-troubleshooting.md](docs/ai-troubleshooting.md).
+
 **Local cluster with kind** (needs `docker`, `kind`, `kubectl`, `helm`; reads `SPLUNK_REALM` and
 `SPLUNK_ACCESS_TOKEN` from `.env`):
 

@@ -95,6 +95,23 @@ FLAG_DEFINITIONS: dict[str, dict] = {
         "description": "The merchant's webhook endpoint returns 500 for a share of deliveries; webhook-dispatcher retries with backoff.",
         "params": {"merchant_id": "lazada-th", "fail_rate": 0.4, "slow_ms": 2500},
     },
+    # ---- Kubernetes acts: incidents the cluster itself notices (restarts, OOMKilled, CrashLoopBackOff),
+    #      so the AI Troubleshooting Agent can produce a Remediation Plan (Kubernetes alerts only).
+    "ledger_memory_leak": {
+        "title": "Ledger memory leak (OOMKilled on Kubernetes)",
+        "consumer": "ledger",
+        "description": "The ledger retains mb_per_second of buffers per second, like a cache without eviction after a bad release. "
+        "With the Kubernetes memory limit (384Mi) the kernel OOM-kills the container every minute or so and the pod restarts; "
+        "on Docker Compose the leak stops at max_mb.",
+        "params": {"mb_per_second": 6, "max_mb": 1536},
+    },
+    "wallet_crash_loop": {
+        "title": "Bad rollout: wallet-sim crash-loops (CrashLoopBackOff)",
+        "consumer": "wallet-sim",
+        "description": "wallet-sim exits a few seconds after start as if a schema migration in a new release failed. Kubernetes restarts "
+        "it into CrashLoopBackOff; Know-Your-Agent lookups fail and every AMP agent payment fails closed.",
+        "params": {"exit_code": 3, "release": "wallet-sim 1.7.0"},
+    },
 }
 
 # One-click presets for the storyline. Everything not listed is turned off.
@@ -123,6 +140,14 @@ SCENARIOS: dict[str, dict] = {
     "act5": {
         "title": "Act 5 — Ask, don't dig (ledger DB contention + flaky webhooks)",
         "flags": {"ledger_db_slow": {}, "webhook_merchant_flaky": {}},
+    },
+    "act6": {
+        "title": "Act 6 — The leaky ledger (memory leak → OOMKilled → pod restarts; Kubernetes)",
+        "flags": {"ledger_memory_leak": {}, "festival_spike": {"multiplier": 2}},
+    },
+    "act7": {
+        "title": "Act 7 — The bad rollout (wallet-sim CrashLoopBackOff → agents fail closed; Kubernetes)",
+        "flags": {"agent_traffic_surge": {"agent_share": 0.25}, "wallet_crash_loop": {}},
     },
 }
 

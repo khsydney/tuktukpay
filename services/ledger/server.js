@@ -14,7 +14,7 @@ const { trace } = require('@opentelemetry/api');
 const { ChaosFlags } = require('./chaos');
 const { event } = require('./log');
 
-const chaos = new ChaosFlags(process.env.CHAOS_URL || 'http://localhost:8090', 2000, ['ledger_db_slow']);
+const chaos = new ChaosFlags(process.env.CHAOS_URL || 'http://localhost:8090', 2000, ['ledger_db_slow', 'ledger_memory_leak']);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://tuktukpay:tuktukpay@localhost:5432/tuktukpay';
 const DEFAULT_POOL = Number(process.env.PG_POOL_SIZE || 10);
 const POOL_WAIT_WARN_MS = Number(process.env.POOL_WAIT_WARN_MS || 100);
@@ -41,6 +41,51 @@ function pool() {
   }
   return pools.normal;
 }
+
+// --- chaos: memory leak (Act 6, Kubernetes) ----------------------------------------
+// Retains `mb_per_second` of buffers every second while the flag is on — a cache that
+// forgot to evict after a release. Under a Kubernetes memory limit the kernel OOM-kills
+// the container and the pod restarts (the AutoDetect "container restart count > 0"
+// alert); on Docker Compose, with no limit, the leak stops at max_mb. The service logs
+// its own memory pressure before it dies — the line a root-cause analysis should find.
+const fs = require('fs');
+const leaked = [];
+let leakedMb = 0;
+let lastPressureLog = 0;
+function cgroupMemoryLimitMb() {
+  for (const p of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+    try {
+      const v = fs.readFileSync(p, 'utf8').trim();
+      if (v && v !== 'max') { const n = Number(v); if (n > 0 && n < 1e15) return Math.round(n / 1048576); }
+    } catch (e) { /* not in a cgroup */ }
+  }
+  return 0;
+}
+setInterval(() => {
+  if (!chaos.enabled('ledger_memory_leak')) {
+    if (leaked.length) { leaked.length = 0; leakedMb = 0; event('info', 'memory.released', 'ledger released its retained buffers (leak flag off)', { 'memory.leaked_mb': 0 }); }
+    return;
+  }
+  const perSec = Number(chaos.param('ledger_memory_leak', 'mb_per_second', 6));
+  const maxMb = Number(chaos.param('ledger_memory_leak', 'max_mb', 1536));
+  if (leakedMb < maxMb) {
+    const buf = Buffer.alloc(perSec * 1048576, 1); // touched, so the kernel really charges it
+    leaked.push(buf);
+    leakedMb += perSec;
+  }
+  const now = Date.now();
+  if (now - lastPressureLog > 5000) {
+    lastPressureLog = now;
+    const mem = process.memoryUsage();
+    const rssMb = Math.round(mem.rss / 1048576);
+    const limitMb = cgroupMemoryLimitMb();
+    const pct = limitMb ? Math.round((rssMb / limitMb) * 100) : 0;
+    event(limitMb && pct >= 80 ? 'error' : 'warn', 'memory.pressure',
+      `ledger memory ${rssMb} MiB RSS${limitMb ? ` of ${limitMb} MiB container limit (${pct}%)` : ''}: settlement cache holds ${leakedMb} MiB and is not evicting`,
+      { 'process.memory.rss_mb': rssMb, 'process.memory.heap_used_mb': Math.round(mem.heapUsed / 1048576), 'process.memory.external_mb': Math.round(mem.external / 1048576),
+        'container.memory.limit_mb': limitMb, 'container.memory.utilization_pct': pct, 'memory.leaked_mb': leakedMb, 'error.type': limitMb && pct >= 80 ? 'memory_limit_near' : 'memory_growth' });
+  }
+}, 1000).unref();
 
 // Pool / query timing fields shared by the ledger log events.
 function dbFields(db) {

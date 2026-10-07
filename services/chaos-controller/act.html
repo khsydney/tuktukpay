@@ -560,6 +560,110 @@ const ACTS = {
       { icon: '🗑️', word: 'Dead-letter queue', meaning: 'A box for messages that failed too many times.' },
     ],
   },
+
+  act6: {
+    icon: '💧', kicker: 'Act 6', title: 'The leaky ledger',
+    line: 'A new ledger release forgot to empty its settlement cache. Memory grows until Kubernetes kills the container. It restarts — and leaks again.',
+    skills: ['Kubernetes navigator', 'AI Troubleshooting Agent', 'Remediation Plan', 'Log Observer'],
+    story: [
+      { icon: '🚀', head: 'New release', text: 'ledger 1.8 ships with a settlement cache.' },
+      { icon: '📈', head: 'Memory climbs', text: 'The cache never evicts: +6 MiB every second.', tone: 'bad' },
+      { icon: '💥', head: 'OOMKilled', text: 'At the 384 MiB limit the kernel kills the container.', spoiler: true, tone: 'bad' },
+      { icon: '🔁', head: 'Restart loop', text: 'Kubernetes restarts the pod. The leak starts again.', spoiler: true, tone: 'bad' },
+      { icon: '🧾', head: 'Payments still approve', text: 'The ledger is off the critical path — but records are lost while it is down.' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'co', col: 0, row: 0, icon: '🚪', label: 'checkout-api', sub: 'approves payments', status: 'slow', tag: '📒 ledger writes fail', hint: { status: 'ok', tag: '🧾 writes fail sometimes' } },
+        { id: 'ledger', col: 1, row: 0, icon: '📒', label: 'ledger', sub: 'pod · 384 MiB limit', status: 'bad', tag: '💧 leak → OOMKilled' },
+        { id: 'pg', col: 2, row: 0, icon: '🐘', label: 'postgres', sub: 'fine', status: 'ok' },
+        { id: 'k8s', col: 1, row: 1, icon: '☸️', label: 'Kubernetes', sub: 'restarts the pod', status: 'slow', tag: '🔁 restart count ↑', hint: { status: 'slow', tag: '🔁 restarts' } },
+        { id: 'cache', col: 0, row: 1, icon: '🗃️', label: 'settlement cache', sub: 'never evicts', status: 'bad', tag: '📈 +6 MiB/s', answerOnly: true },
+      ],
+      edges: [
+        { from: 'co', to: 'ledger', status: 'bad', label: 'write' },
+        { from: 'ledger', to: 'pg', status: 'ok' },
+        { from: 'k8s', to: 'ledger', status: 'slow', label: 'restart', hint: { status: 'slow', label: 'restart' } },
+        { from: 'cache', to: 'ledger', status: 'bad', label: 'grows' },
+      ],
+    },
+    metrics: [
+      { icon: '📈', label: 'ledger memory (RSS)', before: '≈ 120 MiB', after: '→ 384 MiB limit', trend: 'up', tone: 'bad' },
+      { icon: '🔁', label: 'Container restarts', before: '0', after: 'every ≈ 60 s', trend: 'up', tone: 'bad' },
+      { icon: '✅', label: 'Approval rate', before: 'normal', after: 'normal', trend: 'flat', tone: 'good' },
+      { icon: '📒', label: 'Ledger writes failing', before: 'none', after: 'during restarts', trend: 'up', tone: 'warn' },
+    ],
+    mission: [
+      { icon: '🚨', title: 'Start from the Kubernetes alert', where: 'Alerts → "Kubernetes container restarted" (ledger) → AI Troubleshooting Agent. Read the root cause, then open the Remediation Plan.' },
+      { icon: '🗺️', title: 'Kubernetes navigator', where: 'Infrastructure → Kubernetes → pod ledger: memory climbs to the limit, drops, climbs again; restarts count up.', chips: ['container memory', 'k8s.container.restarts'] },
+      { icon: '📜', title: 'The service said so first', where: 'Log Observer: event=memory.pressure — "settlement cache holds 300 MiB and is not evicting" — then checkout-api event=ledger.write_failed.', chips: ['event=memory.pressure', 'memory.leaked_mb', 'event=ledger.write_failed'] },
+      { icon: '🛠️', title: 'Judge the plan', where: 'Does the Remediation Plan raise the limit or roll back the release? Which is the fix, which is the band-aid?' },
+    ],
+    answer: [
+      { icon: '💧', text: 'The ledger leaks ≈ 6 MiB/s: a settlement cache without eviction.', chips: ['memory.leaked_mb', 'event=memory.pressure'] },
+      { icon: '💥', text: 'OOMKilled at the 384 MiB limit; Kubernetes restarts the pod; the leak starts over.', chips: ['OOMKilled', 'k8s.container.restarts'] },
+      { icon: '🧾', text: 'Payments keep approving (the ledger is off the critical path), but writes fail during every restart.', chips: ['event=ledger.write_failed'] },
+    ],
+    why: ['Kubernetes hides crashes well: the pod comes back, the map is green, the data is gone.', 'A restart alert plus the service\'s own memory line is the fastest path to "which release leaked?" — and the Remediation Plan is built for exactly this.'],
+    words: [
+      { icon: '💧', word: 'Memory leak', meaning: 'Memory that is kept but never used again.' },
+      { icon: '💥', word: 'OOMKilled', meaning: 'The kernel killed the container for using more memory than its limit.' },
+      { icon: '🛠️', word: 'Remediation Plan', meaning: 'The AI agent\'s proposed fix for a Kubernetes alert: hypotheses and kubectl steps.' },
+    ],
+  },
+
+  act7: {
+    icon: '🚀', kicker: 'Act 7', title: 'The bad rollout',
+    line: 'A new wallet-sim release crashes seconds after it starts. Kubernetes keeps restarting it. No Know-Your-Agent check means no agent payments.',
+    skills: ['Kubernetes navigator', 'AI Troubleshooting Agent', 'Remediation Plan', 'Log Observer'],
+    story: [
+      { icon: '🚀', head: 'Release 1.7.0', text: 'wallet-sim rolls out with a schema migration.' },
+      { icon: '💥', head: 'Crash on start', text: 'The migration did not apply. The process exits with code 3.', spoiler: true, tone: 'bad' },
+      { icon: '🔁', head: 'CrashLoopBackOff', text: 'Kubernetes restarts it, waiting longer each time.', spoiler: true, tone: 'bad' },
+      { icon: '🔒', head: 'Agents fail closed', text: 'checkout-api cannot verify agents: mandate_kya_unavailable.', tone: 'bad' },
+      { icon: '👤', head: 'Humans unaffected', text: 'Card, wallet and QR payments by people still work.', tone: 'good' },
+    ],
+    flow: {
+      nodes: [
+        { id: 'agent', col: 0, row: 0, icon: '🤖', label: 'AI agents', sub: 'AMP payments', status: 'bad', tag: '😟 all blocked', hint: { status: 'bad', tag: '😟 all blocked' } },
+        { id: 'check', col: 1, row: 0, icon: '🔍', label: 'mandate check', sub: 'checkout-api', status: 'slow', tag: '🔒 fail closed' },
+        { id: 'wallet', col: 2, row: 0, icon: '👛', label: 'wallet-sim', sub: 'pod · release 1.7.0', status: 'bad', tag: '💥 exit 3 · CrashLoopBackOff' },
+        { id: 'k8s', col: 2, row: 1, icon: '☸️', label: 'Kubernetes', sub: 'restarts the pod', status: 'slow', tag: '🔁 restarts ↑', hint: { status: 'slow', tag: '🔁 restarts' } },
+        { id: 'stop', col: 1, row: 1, icon: '🛑', label: 'Blocked', sub: 'mandate_kya_unavailable', status: 'bad', answerOnly: true },
+        { id: 'human', col: 0, row: 2, icon: '👤', label: 'Human shoppers', sub: 'normal checkout', status: 'ok', hint: { status: 'ok' } },
+        { id: 'bank', col: 2, row: 2, icon: '🏦', label: 'bank', sub: 'still approves', status: 'ok', hint: { status: 'ok' } },
+      ],
+      edges: [
+        { from: 'agent', to: 'check', status: 'ai' },
+        { from: 'check', to: 'wallet', status: 'bad', label: 'refused' },
+        { from: 'k8s', to: 'wallet', status: 'slow', label: 'restart', hint: { status: 'slow', label: 'restart' } },
+        { from: 'check', to: 'stop', status: 'bad', stop: true },
+        { from: 'human', to: 'bank', status: 'ok', label: 'works', hint: { status: 'ok', label: 'works' } },
+      ],
+    },
+    metrics: [
+      { icon: '🔁', label: 'wallet-sim restarts', before: '0', after: 'climbing', trend: 'up', tone: 'bad' },
+      { icon: '🛑', label: 'AMP agent payments blocked', before: 'few', after: 'all', trend: 'up', tone: 'bad' },
+      { icon: '👤', label: 'Human payments', before: 'OK', after: 'OK', trend: 'flat', tone: 'good' },
+    ],
+    mission: [
+      { icon: '🚨', title: 'Start from the Kubernetes alert', where: 'Alerts → "Kubernetes container restarted" (wallet-sim) → AI Troubleshooting Agent → Remediation Plan.' },
+      { icon: '📜', title: 'Read the last words', where: 'Log Observer: event=service.crashed — "schema migration kya_agents_v2 did not apply; exiting with code 3". Then checkout-api mandate.block_reason=mandate_kya_unavailable.', chips: ['event=service.crashed', 'deployment.release', 'process.exit_code'] },
+      { icon: '🗺️', title: 'Kubernetes navigator', where: 'Pod wallet-sim: CrashLoopBackOff, restart count, last termination reason.', chips: ['k8s.container.restarts'] },
+      { icon: '🛠️', title: 'Fix it', where: 'kubectl rollout undo deployment/wallet-sim — or switch the flag off. Which did the plan suggest?' },
+    ],
+    answer: [
+      { icon: '💥', text: 'wallet-sim 1.7.0 exits with code 3 a few seconds after start: its schema migration failed.', chips: ['exit code 3', 'SchemaMigrationError'] },
+      { icon: '🔁', text: 'Kubernetes restarts it into CrashLoopBackOff.', chips: ['CrashLoopBackOff', 'k8s.container.restarts'] },
+      { icon: '🔒', text: 'Every AMP agent payment fails closed; human payments are fine.', chips: ['mandate_kya_unavailable'] },
+    ],
+    why: ['A crash loop is the Kubernetes incident the AI Remediation Plan is built for: restarts, the last log line, a rollback.', 'The business impact is in the same trace and log stream: the agent payments that were blocked.'],
+    words: [
+      { icon: '🔁', word: 'CrashLoopBackOff', meaning: 'The pod keeps crashing; Kubernetes waits longer before each restart.' },
+      { icon: '⏪', word: 'Rollback', meaning: 'Go back to the previous release (kubectl rollout undo).' },
+      { icon: '📜', word: 'Last words', meaning: 'The final log line a process writes before it dies.' },
+    ],
+  },
 };
 
 /* ---------- Rendering ---------- */
@@ -573,7 +677,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const chips = (list) => list && list.length ? `<div class="chips">${list.map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>` : '';
 
 function renderDots() {
-  const short = { baseline: 'Baseline', act1: '1', act2: '2', act3: '3', act4: '4', act4b: '4b', act5: '5' };
+  const short = { baseline: 'Baseline', act1: '1', act2: '2', act3: '3', act4: '4', act4b: '4b', act5: '5', act6: '6', act7: '7' };
   $('dots').innerHTML = ORDER.map(k =>
     `<a href="/act/${k}" id="dot-${k}" class="${k === NAME ? 'here' : ''}" title="${esc(ACTS[k].title)}">${short[k] ? (k === 'baseline' ? '💚 ' : 'Act ') + short[k] : k}</a>`).join('');
   const i = ORDER.indexOf(NAME);

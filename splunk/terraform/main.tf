@@ -29,6 +29,12 @@ variable "environment" {
   default     = "tuktukpay-team01"
 }
 
+variable "k8s_namespace" {
+  description = "Kubernetes namespace of the stack (k8s/ variant); the Kubernetes detectors filter on it. Empty on Docker Compose."
+  type        = string
+  default     = "tuktukpay"
+}
+
 variable "notifications" {
   description = "Detector notifications, e.g. [\"Email,you@example.com\"] or [\"Slack,<credential id>,#channel\"]"
   type        = list(string)
@@ -611,6 +617,97 @@ resource "signalfx_detector" "merchant_sim_latency" {
     detect_label  = "merchant_sim_p90_high"
     severity      = "Minor"
     description   = "merchant-sim p90 over 1.5 s — logs: event=merchant.webhook_slow / merchant.webhook_error (merchant.id)"
+    notifications = var.notifications
+  }
+}
+
+# ---- Kubernetes alerts (k8s/ variant): the alert family that also gets a Remediation Plan ----
+#
+# Splunk's AutoDetect detectors ("K8s container restart count is > 0", "K8s pod phase
+# pending/failed", "K8s cluster deployment is not at spec" ...) fire for the same
+# conditions org-wide; these are the environment-scoped versions so every team sees its own
+# alert with the pod and namespace dimensions the AI Troubleshooting Agent keys on.
+
+locals {
+  k8s_filter = "filter('k8s.namespace.name', '${var.k8s_namespace}')"
+}
+
+resource "signalfx_detector" "k8s_container_restarts" {
+  name         = "TukTukPay [${var.environment}] Kubernetes container restarted"
+  description  = "Acts 6 (ledger OOMKilled) and 7 (wallet-sim CrashLoopBackOff): a container restarted — Kubernetes alert, AI Troubleshooting Agent + Remediation Plan"
+  program_text = <<-EOF
+    restarts = data('k8s.container.restarts', filter=${local.k8s_filter}).delta().sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name', 'k8s.container.name'])
+    detect(when(restarts > 0)).publish('k8s_container_restarted')
+  EOF
+  rule {
+    detect_label  = "k8s_container_restarted"
+    severity      = "Critical"
+    description   = "A container restarted (OOMKilled / crash) — logs: event=memory.pressure (ledger) or event=service.crashed (wallet-sim); check the last termination reason on the pod"
+    notifications = var.notifications
+  }
+}
+
+resource "signalfx_detector" "k8s_pods_pending" {
+  name         = "TukTukPay [${var.environment}] Kubernetes pod pending or failed"
+  description  = "Unschedulable or failed pods (k8s/acts/oversize-rollout.sh, ImagePullBackOff) — Kubernetes alert"
+  program_text = <<-EOF
+    pending = data('k8s.pod.phase', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name'])
+    detect(when(pending == 1 or pending == 4, lasting='2m')).publish('k8s_pod_pending')
+  EOF
+  rule {
+    detect_label  = "k8s_pod_pending"
+    severity      = "Major"
+    description   = "A pod has been Pending (1) or Failed (4) for 2 minutes — resource requests, image tag or node capacity"
+    notifications = var.notifications
+  }
+}
+
+resource "signalfx_detector" "k8s_deployment_unavailable" {
+  name         = "TukTukPay [${var.environment}] Kubernetes deployment below desired replicas"
+  description  = "A rollout that cannot become ready (crash loop, bad image, unschedulable) — Kubernetes alert"
+  program_text = <<-EOF
+    desired   = data('k8s.deployment.desired', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.deployment.name'])
+    available = data('k8s.deployment.available', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.deployment.name'])
+    detect(when(available < desired, lasting='3m')).publish('k8s_deployment_unavailable')
+  EOF
+  rule {
+    detect_label  = "k8s_deployment_unavailable"
+    severity      = "Major"
+    description   = "Fewer available than desired replicas for 3 minutes — kubectl rollout status / rollout undo"
+    notifications = var.notifications
+  }
+}
+
+resource "signalfx_detector" "k8s_memory_near_limit" {
+  name         = "TukTukPay [${var.environment}] container memory above 85% of its limit"
+  description  = "Act 6: the ledger's settlement cache grows until OOMKilled — Kubernetes alert that fires before the kill"
+  program_text = <<-EOF
+    usage = data('container.memory.usage', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name', 'k8s.container.name'])
+    limit = data('k8s.container.memory_limit', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name', 'k8s.container.name'])
+    pct = (usage / limit * 100)
+    detect(when(pct > 85, lasting='30s')).publish('k8s_memory_near_limit')
+  EOF
+  rule {
+    detect_label  = "k8s_memory_near_limit"
+    severity      = "Major"
+    description   = "Container memory within 15% of its limit — logs: event=memory.pressure with memory.leaked_mb"
+    notifications = var.notifications
+  }
+}
+
+resource "signalfx_detector" "k8s_cpu_at_limit" {
+  name         = "TukTukPay [${var.environment}] container CPU at its limit (throttling)"
+  description  = "Act 2 on Kubernetes: risk-engine (500m limit) saturates on the v3 canary — Kubernetes alert, Remediation Plan proposes the limit change"
+  program_text = <<-EOF
+    cpu   = data('container.cpu.utilization', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name', 'k8s.container.name'])
+    limit = data('k8s.container.cpu_limit', filter=${local.k8s_filter}).sum(by=['k8s.cluster.name', 'k8s.namespace.name', 'k8s.pod.name', 'k8s.container.name'])
+    pct = (cpu / limit * 100)
+    detect(when(pct > 90, lasting='2m')).publish('k8s_cpu_at_limit')
+  EOF
+  rule {
+    detect_label  = "k8s_cpu_at_limit"
+    severity      = "Major"
+    description   = "Container using more than 90% of its CPU limit for 2 minutes — risk-engine model v3 (AlwaysOn Profiling: _infer_v3; logs: event=risk.inference_slow)"
     notifications = var.notifications
   }
 }
