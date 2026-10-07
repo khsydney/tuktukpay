@@ -170,6 +170,9 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err := json.Unmarshal(body, &req); err != nil || req.MerchantID == "" || req.Amount <= 0 || req.Currency == "" {
 		span.SetStatus(codes.Error, "invalid payment request")
+		s.log.LogAttrs(ctx, slog.LevelWarn, "rejected invalid payment request",
+			slog.String("event", "payment.rejected"), slog.Int("http.response.status_code", http.StatusBadRequest),
+			slog.String("merchant.id", req.MerchantID), slog.Int("http.request.body.size", len(body)))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payment request"})
 		return
 	}
@@ -211,6 +214,25 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 
 	resp := PaymentResponse{PaymentID: paymentID, Initiator: initiator}
 
+	// One structured log line per payment outcome (docs/log-schema.md), carrying the
+	// same business keys as the span so Log Observer and Tag Spotlight agree.
+	logOutcome := func(level slog.Level, event, msg string, status int, extra ...slog.Attr) {
+		fields := append(kvToSlog(attrs),
+			slog.String("event", event), slog.String("payment.outcome", resp.Status),
+			slog.Int("http.response.status_code", status), slog.Int64("duration_ms", time.Since(start).Milliseconds()))
+		if resp.DeclineReason != "" {
+			fields = append(fields, slog.String("payment.decline_reason", resp.DeclineReason))
+		}
+		if resp.Acquirer != "" {
+			fields = append(fields, slog.String("payment.acquirer", resp.Acquirer))
+		}
+		if resp.Risk != nil {
+			fields = append(fields, slog.Float64("risk.score", resp.Risk.Score), slog.String("risk.decision", resp.Risk.Decision),
+				slog.String("risk.model_version", resp.Risk.ModelVersion), slog.Any("risk.reasons", resp.Risk.Reasons))
+		}
+		s.log.LogAttrs(ctx, level, msg, append(fields, extra...)...)
+	}
+
 	// 0. Agentic governance: enforce the consumer's pre-approved task mandate (AMP) --
 	agentVerified := false
 	kyaRating := ""
@@ -228,6 +250,18 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 				resp.MandateDetail = mr.Detail
 				span.SetAttributes(attribute.String("mandate.block_reason", mr.Reason), attribute.Bool("agent.verified", false),
 					attribute.String("payment.outcome", "declined"), attribute.String("payment.decline_reason", mr.Reason))
+				blocked := []slog.Attr{slog.String("mandate.verdict", "blocked"), slog.String("mandate.block_reason", mr.Reason),
+					slog.String("mandate.detail", mr.Detail), slog.String("amp.kya.rating", kyaRating), slog.Bool("agent.verified", false)}
+				if mr.Mandate != nil {
+					blocked = append(blocked, slog.String("amp.task_id", mr.Mandate.TaskID), slog.Float64("amp.mandate.max_amount", mr.Mandate.MaxAmount),
+						slog.String("amp.mandate.currency", mr.Mandate.Currency), slog.String("amp.wallet", mr.Mandate.Wallet))
+				}
+				if strings.HasPrefix(mr.Reason, "mandate_kya") {
+					blocked = append(blocked, slog.String("peer.service", "wallet-sim")) // the Know-Your-Agent registry is a dependency
+				}
+				logOutcome(slog.LevelWarn, "mandate.blocked",
+					fmt.Sprintf("mandate blocked payment %s from agent %s at %s: %s (%s)", paymentID, agentID, req.MerchantID, mr.Reason, mr.Detail),
+					http.StatusForbidden, blocked...)
 				s.persistAndPublish(ctx, &req, &resp, initiator)
 				resp.LatencyMs = time.Since(start).Milliseconds()
 				s.record(ctx, &req, &resp, initiator)
@@ -242,7 +276,7 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 	// 1. Risk scoring -------------------------------------------------------
 	risk, err := s.scoreRisk(ctx, paymentID, &req, initiator, agentVerified, kyaRating)
 	if err != nil {
-		s.fail(ctx, span, w, &resp, "risk_engine_unavailable", err)
+		s.fail(ctx, span, w, &resp, "risk_engine_unavailable", err, kvToSlog(attrs), start)
 		s.record(ctx, &req, &resp, initiator)
 		return
 	}
@@ -258,6 +292,10 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 		resp.DeclineReason = "risk_declined"
 		span.SetAttributes(attribute.String("payment.outcome", "declined"), attribute.String("payment.decline_reason", "risk_declined"))
 		span.AddEvent("payment.declined_by_risk", trace.WithAttributes(attribute.StringSlice("reasons", risk.Reasons)))
+		logOutcome(slog.LevelWarn, "payment.declined",
+			fmt.Sprintf("risk model %s declined payment %s for %s before authorisation: score %.3f (%s)",
+				risk.ModelVersion, paymentID, req.MerchantID, risk.Score, strings.Join(risk.Reasons, ", ")),
+			http.StatusOK)
 		s.persistAndPublish(ctx, &req, &resp, initiator)
 		resp.LatencyMs = time.Since(start).Milliseconds()
 		s.record(ctx, &req, &resp, initiator)
@@ -268,7 +306,7 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 	// 2. Route + authorize ---------------------------------------------------
 	route, err := s.route(ctx, paymentID, &req, initiator)
 	if err != nil {
-		s.fail(ctx, span, w, &resp, "router_unavailable", err)
+		s.fail(ctx, span, w, &resp, "router_unavailable", err, kvToSlog(attrs), start)
 		s.record(ctx, &req, &resp, initiator)
 		return
 	}
@@ -294,6 +332,39 @@ func (s *Service) createPayment(w http.ResponseWriter, r *http.Request) {
 
 	resp.LatencyMs = time.Since(start).Milliseconds()
 	s.record(ctx, &req, &resp, initiator)
+
+	// The outcome line: acquirer, response code and every routing attempt
+	// ("acq-kbank:timeout:2504ms,acq-uob:declined:05:98ms") — enough for a reader,
+	// human or AI, to see a failover and its cost without opening the trace.
+	last := RouteAttempt{}
+	summary := make([]string, 0, len(route.Attempts))
+	for _, a := range route.Attempts {
+		last = a
+		summary = append(summary, fmt.Sprintf("%s:%s:%s:%dms", a.Acquirer, a.Outcome, a.ResponseCode, a.LatencyMs))
+	}
+	routeFields := []slog.Attr{
+		slog.Int("route.attempts", len(route.Attempts)), slog.Bool("route.failover", route.Failover),
+		slog.String("route.attempt_summary", strings.Join(summary, ",")),
+		slog.String("acquirer.response_code", last.ResponseCode), slog.Int64("acquirer.latency_ms", last.LatencyMs),
+	}
+	amount := fmt.Sprintf("%.2f %s", req.Amount, req.Currency)
+	switch route.Status {
+	case "approved":
+		logOutcome(slog.LevelInfo, "payment.approved",
+			fmt.Sprintf("payment %s approved by %s for %s: %s %s (auth %s, %d attempt(s), %d ms)",
+				paymentID, route.Acquirer, req.MerchantID, amount, req.PaymentMethod, route.AuthCode, len(route.Attempts), resp.LatencyMs),
+			http.StatusOK, routeFields...)
+	case "declined":
+		logOutcome(slog.LevelInfo, "payment.declined",
+			fmt.Sprintf("payment %s declined by %s for %s: response %s %s (%s %s, failover=%t)",
+				paymentID, route.Acquirer, req.MerchantID, last.ResponseCode, route.DeclineReason, amount, req.PaymentMethod, route.Failover),
+			http.StatusOK, routeFields...)
+	default:
+		logOutcome(slog.LevelError, "payment.failed",
+			fmt.Sprintf("payment %s failed at every acquirer for %s: %s (%s, attempts %s)",
+				paymentID, req.MerchantID, route.DeclineReason, amount, strings.Join(summary, " ")),
+			http.StatusOK, routeFields...)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -374,10 +445,18 @@ func (s *Service) persistAndPublish(ctx context.Context, req *PaymentRequest, re
 		entry["card_network"] = req.Card.Network
 	}
 	var ack map[string]any
+	ledgerStart := time.Now()
 	if err := s.postJSON(ctx, s.ledgerURL+"/v1/entries", entry, &ack); err != nil {
 		// The ledger is not on the critical path of the authorization decision.
 		trace.SpanFromContext(ctx).AddEvent("ledger.write_failed", trace.WithAttributes(attribute.String("error", err.Error())))
-		s.log.ErrorContext(ctx, "ledger write failed", "payment_id", resp.PaymentID, "error", err)
+		s.log.LogAttrs(ctx, slog.LevelError, fmt.Sprintf("ledger write failed for payment %s after %d ms: %s", resp.PaymentID, time.Since(ledgerStart).Milliseconds(), truncate(err.Error(), 200)),
+			slog.String("event", "ledger.write_failed"), slog.String("payment.id", resp.PaymentID), slog.String("merchant.id", req.MerchantID),
+			slog.String("payment.outcome", resp.Status), slog.String("peer.service", "ledger"), slog.Int64("duration_ms", time.Since(ledgerStart).Milliseconds()),
+			slog.String("error.type", errorType(err)), slog.String("error.message", truncate(err.Error(), 300)))
+	} else if ms := time.Since(ledgerStart).Milliseconds(); ms > 500 {
+		s.log.LogAttrs(ctx, slog.LevelWarn, fmt.Sprintf("ledger write for payment %s took %d ms", resp.PaymentID, ms),
+			slog.String("event", "ledger.write_slow"), slog.String("payment.id", resp.PaymentID), slog.String("merchant.id", req.MerchantID),
+			slog.String("peer.service", "ledger"), slog.Int64("duration_ms", ms))
 	}
 
 	ctx, span := tracer.Start(ctx, "publish payments.events", trace.WithSpanKind(trace.SpanKindProducer),
@@ -409,18 +488,42 @@ func (s *Service) persistAndPublish(ctx context.Context, req *PaymentRequest, re
 	if _, err := s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: s.stream, MaxLen: 50000, Approx: true, Values: values}).Result(); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "event publish failed")
-		s.log.ErrorContext(ctx, "event publish failed", "payment_id", resp.PaymentID, "error", err)
+		s.log.LogAttrs(ctx, slog.LevelError, fmt.Sprintf("could not publish payment.%s event for %s to %s: %s", resp.Status, resp.PaymentID, s.stream, truncate(err.Error(), 200)),
+			slog.String("event", "event.publish_failed"), slog.String("payment.id", resp.PaymentID), slog.String("merchant.id", req.MerchantID),
+			slog.String("messaging.destination.name", s.stream), slog.String("peer.service", "redis"),
+			slog.String("error.type", errorType(err)), slog.String("error.message", truncate(err.Error(), 300)))
 	}
 }
 
-func (s *Service) fail(ctx context.Context, span trace.Span, w http.ResponseWriter, resp *PaymentResponse, reason string, err error) {
+// fail answers 502 when a dependency on the authorisation path did not answer.
+func (s *Service) fail(ctx context.Context, span trace.Span, w http.ResponseWriter, resp *PaymentResponse, reason string, err error, fields []slog.Attr, start time.Time) {
 	resp.Status = "error"
 	resp.DeclineReason = reason
 	span.RecordError(err)
 	span.SetStatus(codes.Error, reason)
 	span.SetAttributes(attribute.String("payment.outcome", "error"), attribute.String("payment.decline_reason", reason))
-	s.log.ErrorContext(ctx, "payment failed", "payment_id", resp.PaymentID, "reason", reason, "error", err)
+	peer := map[string]string{"risk_engine_unavailable": "risk-engine", "router_unavailable": "payment-router"}[reason]
+	fields = append(fields,
+		slog.String("event", "dependency.unavailable"), slog.String("payment.outcome", "error"), slog.String("payment.decline_reason", reason),
+		slog.String("peer.service", peer), slog.String("error.type", errorType(err)), slog.String("error.message", truncate(err.Error(), 300)),
+		slog.Int("http.response.status_code", http.StatusBadGateway), slog.Int64("duration_ms", time.Since(start).Milliseconds()))
+	s.log.LogAttrs(ctx, slog.LevelError, fmt.Sprintf("payment %s failed: %s did not answer (%s): %s", resp.PaymentID, peer, reason, truncate(err.Error(), 160)), fields...)
 	writeJSON(w, http.StatusBadGateway, resp)
+}
+
+// errorType classifies an error for the error.type attribute without leaking details.
+func errorType(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "Client.Timeout") || strings.Contains(msg, "deadline exceeded"):
+		return "timeout"
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(msg, "returned 5"):
+		return "upstream_5xx"
+	default:
+		return fmt.Sprintf("%T", err)
+	}
 }
 
 // record emits the business metrics. Low-cardinality dimensions only: this is
@@ -543,16 +646,17 @@ func truncate(s string, n int) string {
 // ---------- main ----------
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	boot := slog.New(slog.NewJSONHandler(os.Stdout, nil)) // before the SDK exists
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	shutdown, err := setupOTel(ctx)
 	if err != nil {
-		log.Error("otel setup failed", "error", err)
+		boot.Error("otel setup failed", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = shutdown(context.Background()) }()
+	log := newLogger() // stdout JSON + OTLP, see logging.go
 
 	paymentsCounter, _ = meter.Int64Counter("tuktukpay.payments.count", metric.WithDescription("Payments processed"))
 	paymentsAmount, _ = meter.Float64Histogram("tuktukpay.payments.amount", metric.WithDescription("Payment amount in minor units"))
@@ -561,7 +665,7 @@ func main() {
 
 	svc, err := newService(log)
 	if err != nil {
-		log.Error("service init failed", "error", err)
+		log.Error("service init failed", "event", "service.start_failed", "error.message", err.Error())
 		os.Exit(1)
 	}
 
@@ -576,9 +680,10 @@ func main() {
 
 	srv := &http.Server{Addr: ":" + getenv("PORT", "8080"), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
-		log.Info("checkout-api listening", "addr", srv.Addr)
+		log.Info("checkout-api listening on "+srv.Addr, "event", "service.started", "server.address", srv.Addr,
+			"peer.services", []string{"risk-engine", "payment-router", "ledger", "wallet-sim", "redis"})
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server error", "error", err)
+			log.Error("server error: "+err.Error(), "event", "service.failed", "error.message", err.Error())
 			stop()
 		}
 	}()

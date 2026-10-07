@@ -17,9 +17,10 @@ zero-code agents.
 
 | File | What it does |
 |---|---|
-| [`main.go`](main.go) | HTTP routes, the payment flow, business span attributes, metrics |
+| [`main.go`](main.go) | HTTP routes, the payment flow, business span attributes, metrics, one log line per payment outcome |
 | [`amp.go`](amp.go) | Checks the AMP task mandate for agent-initiated payments (signature, expiry, limits, KYA, replay) |
-| [`otel.go`](otel.go) | OTel SDK setup: OTLP/gRPC exporters, resource, propagators, and a fix for Trace Context Level 2 headers |
+| [`otel.go`](otel.go) | OTel SDK setup: OTLP/gRPC exporters for traces, metrics and logs, resource, propagators, and a fix for Trace Context Level 2 headers |
+| [`logging.go`](logging.go) | `slog` fan-out: JSON on stdout with `trace_id`/`span_id` + the `otelslog` bridge that exports every record over OTLP |
 
 ## API
 
@@ -114,6 +115,13 @@ token is a base64url JSON payload signed with HMAC-SHA256 using `AMP_SHARED_SECR
 `risk.score`, `risk.decision`, `risk.model_version`, `risk.reasons`, `payment.acquirer`, `route.attempts`,
 `route.failover`, `payment.outcome`, `payment.decline_reason`, `agent.protocol`, `agent.id`, `agent.verified`,
 `mandate.verdict`, `mandate.block_reason`, `amp.task_id`, `amp.mandate.*`, `amp.kya.rating`, `kya.*`.
+
+**Logs** (one structured record per payment outcome, [schema](../../docs/log-schema.md)): `event=payment.approved |
+payment.declined | payment.failed | mandate.blocked | mandate.verified | dependency.unavailable | ledger.write_failed |
+ledger.write_slow | event.publish_failed`, each with the span's business attributes, `payment.decline_reason`,
+`route.attempt_summary` (e.g. `acq-kbank:timeout:timeout:2504ms,acq-uob:declined:05:98ms`), `peer.service`,
+`error.type`, `duration_ms` and the trace context. Written to stdout as JSON and exported over OTLP by the
+`otelslog` bridge (`LOG_LEVEL` gates both; `debug` adds `mandate.check_failed` details).
 
 **Metrics** (exported every 10 s)
 

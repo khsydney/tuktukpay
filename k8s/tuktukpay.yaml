@@ -289,7 +289,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -376,7 +376,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -473,7 +473,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -639,6 +639,12 @@ spec:
           value: http://chaos-controller:8090
         - name: OTEL_SERVICE_NAME
           value: acquirer-sim
+        - name: SPLUNK_AUTOMATIC_LOG_COLLECTION   # @splunk/otel: export pino logs over OTLP/HTTP ...
+          value: 'true'
+        - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT  # ... to the agent's 4318 port (docs/log-schema.md)
+          value: http://$(SPLUNK_OTEL_AGENT):4318/v1/logs
+        - name: LOG_LEVEL
+          value: info
         - name: PORT
           value: '8083'
         - name: SPLUNK_PROFILER_ENABLED
@@ -719,6 +725,12 @@ spec:
           value: http://chaos-controller:8090
         - name: OTEL_SERVICE_NAME
           value: ledger
+        - name: SPLUNK_AUTOMATIC_LOG_COLLECTION   # @splunk/otel: export pino logs over OTLP/HTTP ...
+          value: 'true'
+        - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT  # ... to the agent's 4318 port (docs/log-schema.md)
+          value: http://$(SPLUNK_OTEL_AGENT):4318/v1/logs
+        - name: LOG_LEVEL
+          value: info
         - name: PORT
           value: '8084'
         - name: PG_POOL_SIZE
@@ -798,7 +810,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -883,7 +895,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -945,7 +957,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS
@@ -1025,7 +1037,7 @@ spec:
         - name: CHAOS_URL
           value: http://chaos-controller:8090
         - name: OTEL_PYTHON_LOG_CORRELATION
-          value: 'true'
+          value: 'false'   # tuktuk_logging.py writes JSON with trace ids; records also leave via OTLP
         - name: OTEL_PYTHON_URLLIB_EXCLUDED_URLS
           value: chaos-controller
         - name: OTEL_PYTHON_EXCLUDED_URLS

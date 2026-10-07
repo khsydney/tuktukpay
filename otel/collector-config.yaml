@@ -104,6 +104,25 @@ processors:
           - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]route.*")
           - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]payment.*")
 
+  # Logs: every service exports OTLP log records with trace_id / span_id and the
+  # business attributes documented in docs/log-schema.md. Before they go to Splunk
+  # Cloud Platform (HEC) we (1) make `source` the service name so SPL reads naturally
+  # (source=payment-router) while service.name stays an indexed field for Related
+  # Content, and (2) add a lowercase `severity` field, the key Log Observer Connect
+  # recognises (values: debug, info, warn, error, critical).
+  transform/logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["com.splunk.source"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+          - set(attributes["severity"], ConvertCase(severity_text, "lower")) where severity_text != nil
+          - set(attributes["severity"], "warn") where attributes["severity"] == "warning"
+          - set(attributes["severity"], "error") where attributes["severity"] == "severe" or attributes["severity"] == "err"
+          - set(attributes["severity"], "critical") where attributes["severity"] == "fatal"
+          - set(attributes["severity"], "info") where attributes["severity"] == "information" or attributes["severity"] == "info2" or attributes["severity"] == "info3" or attributes["severity"] == "info4"
+          - set(attributes["severity"], "debug") where attributes["severity"] == "fine" or attributes["severity"] == "finer" or attributes["severity"] == "finest" or attributes["severity"] == "trace" or attributes["severity"] == "debug2" or attributes["severity"] == "debug3" or attributes["severity"] == "debug4"
+
 exporters:
   # Metrics (+ trace/metric correlation) to Splunk Observability Cloud
   signalfx:
@@ -117,13 +136,34 @@ exporters:
     traces_endpoint: ${SPLUNK_INGEST_URL}/v2/trace/otlp
     headers:
       X-SF-Token: ${SPLUNK_ACCESS_TOKEN}
-  # Logs to Splunk platform HEC (Log Observer Connect) or the O11y ingest endpoint
+  # Logs to Splunk Cloud Platform over HEC — Log Observer Connect then reads them
+  # from Observability Cloud (docs/logs-setup.md). Set SPLUNK_HEC_URL / _TOKEN / _INDEX
+  # in .env; without them the collector falls back to the O11y ingest endpoint, which
+  # only works for orgs with the Observability Logs entitlement.
+  #
+  # Every OTLP log record becomes one HEC event: body -> event; trace_id, span_id,
+  # severity and ALL resource + log attributes (service.name, deployment.environment,
+  # payment.id, merchant.id ...) -> indexed `fields`. host.name -> host.
   splunk_hec:
     token: ${SPLUNK_HEC_TOKEN}
     endpoint: ${SPLUNK_HEC_URL}
-    source: otel
+    index: ${SPLUNK_HEC_INDEX}
+    source: otel                   # overridden per record by com.splunk.source (= service.name)
     sourcetype: otel
     profiling_data_enabled: false
+    timeout: 10s
+    # Resilience: a dead HEC endpoint (wrong URL, IP allow list, 404) must never back
+    # up into memory_limiter and make the collector refuse traces and metrics. Give up
+    # on a batch after two minutes and keep the queue small.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 120s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 200
   # AlwaysOn Profiling data travels as OTLP logs to the O11y ingest endpoint
   splunk_hec/profiling:
     token: ${SPLUNK_ACCESS_TOKEN}
@@ -147,5 +187,5 @@ service:
       exporters: [signalfx]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch, resourcedetection, resource/add_environment]
+      processors: [memory_limiter, resourcedetection, resource/add_environment, transform/logs, batch]
       exporters: [splunk_hec, splunk_hec/profiling]

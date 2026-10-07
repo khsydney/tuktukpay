@@ -26,10 +26,9 @@ import httpx
 
 import amp
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("merchant-storefront")
-logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is too chatty for Log Observer
+log = setup_logging("merchant-storefront")
 
 CHECKOUT_URL = os.getenv("CHECKOUT_URL", "http://localhost:8080").rstrip("/")
 COPILOT_URL = os.getenv("COPILOT_URL", "http://localhost:8086").rstrip("/")
@@ -38,7 +37,8 @@ MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "96"))
 COPILOT_INTERVAL_S = float(os.getenv("COPILOT_INTERVAL_S", "8"))
 BASE_AGENT_SHARE = float(os.getenv("BASE_AGENT_SHARE", "0.03"))
 
-chaos = ChaosFlags()
+# The storefront is where campaign / traffic-shape changes are visible, so it logs those flag flips.
+chaos = ChaosFlags(watch={"festival_spike", "agent_traffic_surge", "agent_mandate_violations", "copilot_prompt_injection", "traffic_paused"})
 
 # --- reference data --------------------------------------------------------------
 # amount scale ~ SGD 1 in each currency (rough, for plausible ticket sizes)
@@ -222,6 +222,15 @@ async def send_payment(client: httpx.AsyncClient, sem: asyncio.Semaphore):
             res = await client.post(f"{CHECKOUT_URL}/v1/payments", json=payment, headers=headers)
             if res.status_code >= 500:
                 stats["errors"] += 1
+                try:
+                    reason = str(res.json().get("decline_reason", ""))
+                except Exception:  # noqa: BLE001 - error bodies are not always JSON
+                    reason = ""
+                log_event(log, logging.WARNING, "storefront.checkout_error",
+                          f"TukTukPay returned HTTP {res.status_code} ({reason or 'no reason'}) for a {payment['currency']} {payment['payment_method']} payment at {payment['merchant_id']}",
+                          **{"merchant.id": payment["merchant_id"], "payment.currency": payment["currency"], "payment.method": payment["payment_method"],
+                             "payment.initiator": "agent" if agent else "human", "http.response.status_code": res.status_code, "peer.service": "checkout-api",
+                             "payment.decline_reason": reason})
                 return
             body = res.json()
             pid = body.get("payment_id")
@@ -237,7 +246,9 @@ async def send_payment(client: httpx.AsyncClient, sem: asyncio.Semaphore):
                 await client.get(f"{CHECKOUT_URL}/v1/payments/{pid}")
         except httpx.HTTPError as exc:
             stats["errors"] += 1
-            log.warning("checkout call failed: %s", exc)
+            log_event(log, logging.WARNING, "storefront.checkout_error", f"checkout call failed: {type(exc).__name__}: {exc}",
+                      **{"merchant.id": payment["merchant_id"], "payment.currency": payment["currency"], "payment.method": payment["payment_method"],
+                         "payment.initiator": "agent" if agent else "human", "peer.service": "checkout-api", "error.type": type(exc).__name__, "error.message": str(exc)})
 
 
 INJECTIONS = [
@@ -269,9 +280,11 @@ async def ask_copilot(client: httpx.AsyncClient, counter: list[int]):
         res = await client.post(f"{COPILOT_URL}/v1/ask", json={"merchant_id": merchant, "question": question, "session_id": f"sess_{merchant}_{counter[0] // 5}"}, timeout=90)
         stats["copilot"] += 1
         if res.status_code >= 400:
-            log.warning("copilot returned %d: %s", res.status_code, res.text[:200])
+            log_event(log, logging.WARNING, "storefront.copilot_error", f"copilot returned HTTP {res.status_code}: {res.text[:200]}",
+                      **{"merchant.id": merchant, "http.response.status_code": res.status_code, "peer.service": "merchant-copilot"})
     except httpx.HTTPError as exc:
-        log.warning("copilot call failed: %s", exc)
+        log_event(log, logging.WARNING, "storefront.copilot_error", f"copilot call failed: {type(exc).__name__}: {exc}",
+                  **{"merchant.id": merchant, "peer.service": "merchant-copilot", "error.type": type(exc).__name__, "error.message": str(exc)})
 
 
 async def copilot_loop(client: httpx.AsyncClient):
@@ -292,12 +305,18 @@ async def stats_loop():
         delta = {k: stats[k] - last[k] for k in stats}
         last = dict(stats)
         if chaos.enabled("traffic_paused"):
-            log.info("traffic paused from the war-room controls (sent=%d in the last 30s)", delta["sent"])
+            log_event(log, logging.INFO, "storefront.paused", f"traffic paused from the war-room controls (sent={delta['sent']} in the last 30s)",
+                      **{"storefront.sent": delta["sent"]})
             continue
         total = max(delta["sent"], 1)
         mult = chaos.param("festival_spike", "multiplier", 10) if chaos.enabled("festival_spike") else 1
-        log.info("last 30s: sent=%d (%.1f rps, x%s) approved=%.1f%% declined=%d errors=%d agent=%d copilot=%d",
-                 delta["sent"], delta["sent"] / 30, mult, 100 * delta["approved"] / total, delta["declined"], delta["errors"], delta["agent"], delta["copilot"])
+        approval = 100 * delta["approved"] / total
+        log_event(log, logging.INFO, "storefront.stats",
+                  f"last 30s: sent={delta['sent']} ({delta['sent'] / 30:.1f} rps, x{mult}) approved={approval:.1f}% declined={delta['declined']} errors={delta['errors']} agent={delta['agent']} copilot={delta['copilot']}",
+                  **{"storefront.sent": delta["sent"], "storefront.rps": round(delta["sent"] / 30, 2), "storefront.traffic_multiplier": mult,
+                     "storefront.approval_rate_pct": round(approval, 1), "storefront.declined": delta["declined"], "storefront.errors": delta["errors"],
+                     "storefront.agent_payments": delta["agent"], "storefront.copilot_questions": delta["copilot"],
+                     "storefront.campaign": "11.11" if chaos.enabled("festival_spike") else "none"})
 
 
 async def payments_loop(client: httpx.AsyncClient):
@@ -314,7 +333,8 @@ async def payments_loop(client: httpx.AsyncClient):
 
 
 async def main():
-    log.info("merchant-storefront starting: checkout=%s copilot=%s base_rps=%s", CHECKOUT_URL, COPILOT_URL, BASE_RPS)
+    log_event(log, logging.INFO, "service.started", f"merchant-storefront starting: checkout={CHECKOUT_URL} copilot={COPILOT_URL} base_rps={BASE_RPS}",
+              **{"storefront.base_rps": BASE_RPS, "storefront.copilot_interval_s": COPILOT_INTERVAL_S})
     limits = httpx.Limits(max_connections=MAX_CONCURRENCY + 8, max_keepalive_connections=32)
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), limits=limits) as client:
         # wait for checkout-api

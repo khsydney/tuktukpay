@@ -27,9 +27,9 @@ from opentelemetry import metrics, trace
 from pydantic import BaseModel, Field
 
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("risk-engine")
+log = setup_logging("risk-engine")
 
 tracer = trace.get_tracer("tuktukpay.risk-engine")
 meter = metrics.get_meter("tuktukpay.risk-engine")
@@ -37,8 +37,11 @@ score_hist = meter.create_histogram("tuktukpay.risk.score", description="Risk sc
 inference_hist = meter.create_histogram("tuktukpay.risk.inference_ms", unit="ms", description="Model inference time")
 decision_counter = meter.create_counter("tuktukpay.risk.decisions", description="Risk decisions by model/decision")
 
-chaos = ChaosFlags()
+chaos = ChaosFlags(watch={"risk_model_drift"})
 app = FastAPI(title="TukTukPay risk-engine", version="2.3.0")
+INFERENCE_SLO_MS = float(os.getenv("RISK_INFERENCE_SLO_MS", "50"))
+log_event(log, logging.INFO, "service.started", "risk-engine ready: model v2 in production, v3 canary available",
+          **{"risk.model_version": "v2", "risk.inference_slo_ms": INFERENCE_SLO_MS})
 
 # --- reference data ---------------------------------------------------------
 CURRENCY_COUNTRY = {"THB": "TH", "SGD": "SG", "MYR": "MY", "IDR": "ID", "PHP": "PH", "VND": "VN", "USD": "US"}
@@ -233,11 +236,31 @@ def score(req: ScoreRequest):
     inference_hist.record(infer_ms, {"risk.model_version": model_version})
     decision_counter.add(1, {**dims, "risk.decision": decision})
 
+    fields = {
+        "payment.id": req.payment_id, "merchant.id": req.merchant_id, "payment.method": req.payment_method,
+        "payment.currency": req.currency, "payment.initiator": req.initiator, "customer.country": req.customer.country,
+        "risk.model_version": model_version, "risk.score": round(s, 4), "risk.decision": decision, "risk.reasons": reasons,
+        "risk.inference_ms": round(infer_ms, 1), "risk.feature_count": len(features),
+    }
+    if model_version != "v2":
+        fields["risk.canary_pct"] = chaos.param("risk_model_drift", "canary_pct", 20)
+    # One line per inference: the SLO breach is the Act 2 story (it names the canary model
+    # version), a canary that is fast enough is an INFO line, v2 within SLO stays quiet.
+    if infer_ms > INFERENCE_SLO_MS:
+        log_event(log, logging.WARNING, "risk.inference_slow",
+                  f"model {model_version} inference took {infer_ms:.0f} ms (SLO {INFERENCE_SLO_MS:.0f} ms) for payment {req.payment_id}: {decision} ({', '.join(reasons) or 'no flags'})",
+                  **fields, **{"risk.inference_slo_ms": INFERENCE_SLO_MS})
+    elif model_version != "v2":
+        log_event(log, logging.INFO, "risk.canary_inference",
+                  f"canary model {model_version} scored payment {req.payment_id} in {infer_ms:.0f} ms: {decision} ({', '.join(reasons) or 'no flags'})", **fields)
     if decision == "deny":
-        log.warning(
-            "risk deny payment_id=%s merchant=%s model=%s score=%.3f reasons=%s",
-            req.payment_id, req.merchant_id, model_version, s, ",".join(reasons),
-        )
+        log_event(log, logging.WARNING, "risk.declined",
+                  f"model {model_version} denied payment {req.payment_id} for {req.merchant_id}: score {s:.3f} ({', '.join(reasons)})", **fields)
+    elif decision == "review":
+        log_event(log, logging.INFO, "risk.review",
+                  f"model {model_version} sent payment {req.payment_id} for {req.merchant_id} to manual review: score {s:.3f}", **fields)
+    else:
+        log_event(log, logging.DEBUG, "risk.scored", f"model {model_version} allowed payment {req.payment_id}: score {s:.3f}", **fields)
     return ScoreResponse(
         score=round(s, 4),
         decision=decision,

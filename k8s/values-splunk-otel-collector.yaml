@@ -14,17 +14,25 @@ clusterName: tuktukpay-eks
 environment: tuktukpay-eks            # becomes deployment.environment on everything the collector emits
 
 splunkObservability:
-  realm: au0                         # your realm (sg0/au0/jp0/us1/eu0)
+  realm: us1                         # your realm (us1/sg0/au0/jp0/eu0)
   # accessToken: set with --set or via an existing secret (secret.create=false, secret.name=...)
   profilingEnabled: true             # AlwaysOn Profiling data path
   infrastructureMonitoringEventsEnabled: true
-  logsEnabled: false                 # true only if your org has Observability Logs / you don't use Log Observer Connect
+  logsEnabled: false                 # true only if your org has the Observability Logs entitlement
 
-# Optional: logs to your Splunk platform (Log Observer Connect)
-# splunkPlatform:
-#   endpoint: https://http-inputs-<stack>.splunkcloud.com/services/collector/event
-#   token: <HEC token>
-#   index: tuktukpay
+# Logs -> Splunk Cloud Platform over HEC; Log Observer Connect reads them from Observability
+# Cloud (docs/logs-setup.md). The applications export their own OTLP log records (same code as
+# Docker Compose: trace_id, span_id, service.name, business fields), so container stdout
+# collection is switched off below to avoid every line arriving twice.
+splunkPlatform:
+  endpoint: https://http-inputs-<stack>.splunkcloud.com:443/services/collector   # GCP stacks: http-inputs.<stack>
+  token: <HEC token>                 # or --set splunkPlatform.token=$SPLUNK_HEC_TOKEN
+  index: tuktukpay
+  logsEnabled: true
+  metricsEnabled: false
+logsCollection:
+  containers:
+    enabled: false                   # apps send OTLP logs themselves; turn on for pod stdout of third-party images
 
 # --- Zero-code auto-instrumentation via the OpenTelemetry Operator -----------------
 operatorcrds:

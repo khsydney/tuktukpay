@@ -20,8 +20,13 @@ x-otel-env: &otel-env
 
 x-python-otel-env: &python-otel-env
   <<: *otel-env
-  OTEL_PYTHON_LOG_CORRELATION: "true"
+  # Logs: the Splunk Python distro attaches an OTLP LoggingHandler to the root logger
+  # (OTEL_LOGS_EXPORTER=otlp is its default); tuktuk_logging.py adds the JSON stdout
+  # line with trace_id/span_id, so the distro's own text correlation format is off.
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_PYTHON_LOG_CORRELATION: "false"
   OTEL_PYTHON_LOG_LEVEL: info
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
   OTEL_PYTHON_URLLIB_EXCLUDED_URLS: chaos-controller
   OTEL_PYTHON_EXCLUDED_URLS: healthz
   SPLUNK_PROFILER_ENABLED: "true"   # AlwaysOn Profiling (CPU) for Python
@@ -32,6 +37,12 @@ x-node-otel-env: &node-otel-env
   SPLUNK_PROFILER_MEMORY_ENABLED: "true"
   SPLUNK_RUNTIME_METRICS_ENABLED: "true"
   OTEL_METRICS_EXPORTER: otlp
+  # Logs: @splunk/otel starts an OTLP LoggerProvider when SPLUNK_AUTOMATIC_LOG_COLLECTION
+  # is on; pino records (log.js) are sent with trace_id/span_id injected. Its log
+  # exporter speaks OTLP/HTTP, so point it at the collector's 4318 port explicitly.
+  SPLUNK_AUTOMATIC_LOG_COLLECTION: "true"
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
+  LOG_LEVEL: ${LOG_LEVEL:-info}
 
 services:
   # ---------------------------------------------------------------- telemetry
@@ -45,9 +56,11 @@ services:
       SPLUNK_REALM: ${SPLUNK_REALM:?set SPLUNK_REALM in .env}
       SPLUNK_MEMORY_TOTAL_MIB: "512"
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-tuktukpay-team01}
-      # Optional: send logs to your Splunk platform HEC for Log Observer Connect
+      # Logs -> Splunk Cloud Platform HEC (Log Observer Connect). See docs/logs-setup.md.
+      # Fallback: the O11y ingest endpoint (needs the Observability Logs entitlement).
       SPLUNK_HEC_URL: ${SPLUNK_HEC_URL:-https://ingest.${SPLUNK_REALM}.observability.splunkcloud.com/v1/log}
       SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:-${SPLUNK_ACCESS_TOKEN}}
+      SPLUNK_HEC_INDEX: ${SPLUNK_HEC_INDEX:-}
     volumes:
       - ./otel/collector-config.yaml:/etc/otel/collector-config.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -100,6 +113,7 @@ services:
     environment:
       <<: *otel-env
       OTEL_SERVICE_NAME: checkout-api
+      LOG_LEVEL: ${LOG_LEVEL:-info}   # slog level; logs go to stdout (JSON) and OTLP (otelslog bridge)
       PORT: "8080"
       RISK_URL: http://risk-engine:8081
       ROUTER_URL: http://payment-router:8082
@@ -133,7 +147,11 @@ services:
       JAVA_TOOL_OPTIONS: -javaagent:/otel/splunk-otel-javaagent.jar
       SPLUNK_PROFILER_ENABLED: "true"
       SPLUNK_PROFILER_MEMORY_ENABLED: "true"
+      # Logs: Log.java emits structured records through the OpenTelemetry Logs API, which
+      # the Java agent bridges to its SDK and exports with trace context (OTLP). JUL
+      # records (startup, uncaught errors) are captured by the agent as well.
       OTEL_LOGS_EXPORTER: otlp
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS: x-payment-acquirer,x-route-attempts,x-route-failover,x-route-outcome
       ACQUIRER_URL: http://acquirer-sim:8083
       ACQUIRER_TIMEOUT_MS: "2500"

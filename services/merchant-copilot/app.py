@@ -19,16 +19,20 @@ from pydantic import BaseModel
 
 import agent
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("merchant-copilot")
-logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is too chatty for Log Observer
+log = setup_logging("merchant-copilot")
 
-chaos = ChaosFlags()
+chaos = ChaosFlags(watch={"copilot_tool_loop"})
 DEFAULT_PROVIDER = os.getenv("COPILOT_PROVIDER", "mock")
-DEFAULT_MODEL = os.getenv("COPILOT_MODEL", "")
+# Compose keeps a trailing "# comment" when the value in .env is empty — strip it.
+DEFAULT_MODEL = os.getenv("COPILOT_MODEL", "").split("#", 1)[0].strip()
+TOOL_LOOP_WARN_AT = int(os.getenv("COPILOT_TOOL_LOOP_WARN_AT", "5"))
 
 app = FastAPI(title="TukTukPay merchant-copilot", version="2.0.0")
+log_event(log, logging.INFO, "service.started", f"merchant-copilot ready: provider={DEFAULT_PROVIDER} model={DEFAULT_MODEL or '(provider default)'} guardrail={'on' if agent.GUARDRAIL_ENABLED else 'off'}",
+          **{"gen_ai.provider.name": DEFAULT_PROVIDER, "gen_ai.request.model": DEFAULT_MODEL or "(provider default)", "copilot.guardrail_enabled": agent.GUARDRAIL_ENABLED,
+             "copilot.max_iterations": agent.MAX_ITERATIONS})
 
 
 class AskRequest(BaseModel):
@@ -60,11 +64,25 @@ def ask(req: AskRequest):
         loop_iterations=loop_iterations,
     )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
-    log.info(
-        "copilot answered merchant=%s model=%s iterations=%d tokens_in=%d tokens_out=%d cost_usd=%.5f finish=%s latency_ms=%.0f guardrail=%s",
-        req.merchant_id, result.model, result.iterations, result.input_tokens, result.output_tokens, result.cost_usd,
-        result.finish_reason, latency_ms, result.guardrail.get("input", {}).get("verdict"),
-    )
+    tool_names = [t.get("tool", "") for t in result.tool_calls]
+    fields = {
+        "merchant.id": req.merchant_id, "gen_ai.provider.name": result.provider, "gen_ai.request.model": result.model,
+        "gen_ai.conversation.id": req.session_id or "", "copilot.iterations": result.iterations, "copilot.tool_call_count": len(tool_names),
+        "gen_ai.tool.names": tool_names, "gen_ai.usage.input_tokens": result.input_tokens, "gen_ai.usage.output_tokens": result.output_tokens,
+        "copilot.cost_usd": result.cost_usd, "gen_ai.response.finish_reason": result.finish_reason, "duration_ms": latency_ms,
+        "guardrail.verdict": result.guardrail.get("input", {}).get("verdict", ""),
+    }
+    if result.finish_reason == "max_iterations":
+        log_event(log, logging.ERROR, "copilot.max_iterations",
+                  f"copilot gave up after {result.iterations} iterations for {req.merchant_id}: {result.input_tokens + result.output_tokens} tokens, {latency_ms:.0f} ms, tools {tool_names}", **fields)
+    elif result.iterations >= TOOL_LOOP_WARN_AT:
+        repeated = max(tool_names.count(n) for n in set(tool_names)) if tool_names else 0
+        log_event(log, logging.WARNING, "copilot.tool_loop_suspected",
+                  f"copilot needed {result.iterations} iterations for one question from {req.merchant_id} ({repeated}x the same tool, {result.input_tokens + result.output_tokens} tokens, {latency_ms:.0f} ms)",
+                  **fields, **{"copilot.repeated_tool_calls": repeated})
+    log_event(log, logging.INFO, "copilot.answered",
+              f"copilot answered {req.merchant_id} in {latency_ms:.0f} ms: {result.iterations} iterations, {result.input_tokens}+{result.output_tokens} tokens, USD {result.cost_usd:.5f}, guardrail {fields['guardrail.verdict']}",
+              **fields)
     return {
         "answer": result.answer,
         "model": result.model,

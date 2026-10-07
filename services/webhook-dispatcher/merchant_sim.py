@@ -16,11 +16,11 @@ from fastapi import FastAPI, Request, Response
 from opentelemetry import metrics, trace
 
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("merchant-sim")
+log = setup_logging("merchant-sim")
 
-chaos = ChaosFlags()
+chaos = ChaosFlags(watch={"webhook_merchant_flaky", "catalog_prompt_injection"})
 meter = metrics.get_meter("tuktukpay.merchant-sim")
 received = meter.create_counter("tuktukpay.merchant_webhooks.received", description="Webhooks received by simulated merchants")
 
@@ -85,6 +85,9 @@ def catalog(merchant_id: str, q: str = "", category: str = ""):
     if poisoned:
         items.insert(0, POISONED_ITEM)
         span.set_attribute("catalog.contains_untrusted_content", True)
+        log_event(log, logging.WARNING, "catalog.untrusted_listing_served",
+                  f"catalog for {merchant_id} includes listing {POISONED_ITEM['sku']} whose description addresses AI shopping agents (indirect prompt injection)",
+                  **{"merchant.id": merchant_id, "catalog.sku": POISONED_ITEM["sku"], "catalog.query": q[:80], "security.prompt_injection.suspected": True})
     if q:
         words = [w for w in q.lower().split() if len(w) > 2]
         scored = [(sum(1 for w in words if w in (i["name"] + " " + str(i["attrs"])).lower()), i) for i in items]
@@ -99,6 +102,8 @@ async def webhook(merchant_id: str, request: Request, response: Response):
     span = trace.get_current_span()
     span.set_attributes({"merchant.id": merchant_id, "payment.id": payload.get("payment_id", ""), "webhook.event_type": payload.get("type", "")})
 
+    fields = {"merchant.id": merchant_id, "payment.id": payload.get("payment_id", ""), "webhook.event_type": payload.get("type", ""),
+              "webhook.attempt": request.headers.get("X-TukTukPay-Attempt", "1")}
     if chaos.enabled("webhook_merchant_flaky") and merchant_id == chaos.param("webhook_merchant_flaky", "merchant_id", "lazada-th"):
         fail_rate = chaos.param("webhook_merchant_flaky", "fail_rate", 0.4)
         slow_ms = chaos.param("webhook_merchant_flaky", "slow_ms", 2500)
@@ -106,12 +111,19 @@ async def webhook(merchant_id: str, request: Request, response: Response):
         if roll < fail_rate:
             received.add(1, {"merchant.id": merchant_id, "outcome": "500"})
             span.set_attribute("merchant.webhook_outcome", "server_error")
-            log.warning("merchant %s webhook handler crashed for %s (simulated)", merchant_id, payload.get("payment_id"))
+            # What the merchant's own backend would log: its order service is the one falling over.
+            log_event(log, logging.ERROR, "merchant.webhook_error",
+                      f"{merchant_id} order-service failed to process webhook for {payload.get('payment_id')}: order database connection pool exhausted (HTTP 500)",
+                      **fields, **{"http.response.status_code": 500, "error.type": "OrderServiceUnavailable", "peer.service": f"{merchant_id}-order-db"})
             response.status_code = 500
             return {"error": "merchant order service unavailable"}
         if roll < fail_rate + 0.2:
             span.set_attribute("merchant.webhook_outcome", "slow")
+            log_event(log, logging.WARNING, "merchant.webhook_slow",
+                      f"{merchant_id} order-service is slow: webhook for {payload.get('payment_id')} held for {slow_ms} ms waiting on the order database",
+                      **fields, **{"duration_ms": slow_ms, "peer.service": f"{merchant_id}-order-db"})
             time.sleep(slow_ms / 1000)
 
     received.add(1, {"merchant.id": merchant_id, "outcome": "200"})
+    log_event(log, logging.DEBUG, "merchant.webhook_received", f"{merchant_id} received webhook for {payload.get('payment_id')}", **fields)
     return {"received": True, "merchant_id": merchant_id, "payment_id": payload.get("payment_id")}

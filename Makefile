@@ -2,7 +2,7 @@
 COMPOSE ?= docker compose
 CHAOS   ?= http://localhost:8090
 
-.PHONY: up down restart logs ps smoke pause resume reset act1 act2 act3 act4 act5 baseline dotnet dualship flags
+.PHONY: up down restart logs ps smoke pause resume reset act1 act2 act3 act4 act5 baseline dotnet dualship flags hec-test logs-status
 
 up:            ## build + start everything
 	$(COMPOSE) up -d --build
@@ -24,6 +24,14 @@ flags:
 	curl -s $(CHAOS)/flags | python3 -m json.tool
 reset baseline act1 act2 act3 act4 act5:
 	curl -s -X POST $(CHAOS)/scenarios/$(if $(filter reset,$@),baseline,$@) | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("title","reset"))'
+hec-test:      ## send one test event to the Splunk Cloud HEC endpoint configured in .env (docs/logs-setup.md)
+	@set -a; . ./.env; set +a; \
+	curl -sS --max-time 15 -w ' [http %{http_code}]\n' "$$SPLUNK_HEC_URL/event" \
+	  -H "Authorization: Splunk $$SPLUNK_HEC_TOKEN" -H 'Content-Type: application/json' \
+	  -d "{\"event\":\"tuktukpay hec connectivity test\",\"sourcetype\":\"otel\",\"source\":\"hec-test\",\"index\":\"$$SPLUNK_HEC_INDEX\",\"fields\":{\"service.name\":\"hec-test\",\"deployment.environment\":\"$$DEPLOYMENT_ENVIRONMENT\"}}"
+logs-status:   ## how many log records the collector has sent to / failed to send to Splunk HEC
+	@docker run --rm --network container:otel-collector curlimages/curl:8.10.1 -s http://127.0.0.1:8888/metrics \
+	  | grep -E '^otelcol_exporter_(sent|send_failed|enqueue_failed)_log_records' | grep -v profiling || echo "collector metrics not reachable"
 dotnet:        ## swap the ledger for the .NET implementation
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.dotnet.yml up -d --build ledger
 dualship:      ## collector exports to Splunk AND Datadog (needs DD_API_KEY in .env)

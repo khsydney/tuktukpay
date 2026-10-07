@@ -12,6 +12,7 @@ emit the same attributes, so every Splunk view built on them works with this too
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -23,6 +24,9 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 import guardrail
 from providers import LLMResponse, build_provider, estimate_cost
 from tools import TOOL_SCHEMAS, TOOLS
+from tuktuk_logging import log_event
+
+log = logging.getLogger("merchant-copilot.agent")
 
 AGENT_NAME = "tuktukpay-merchant-copilot"
 AGENT_ID = "copilot-v2"
@@ -94,6 +98,10 @@ def ask(merchant_id: str, question: str, session_id: str | None, provider_kind: 
             if input_verdict.verdict == "flag":
                 g.add_event("guardrail.prompt_injection_suspected", {"guardrail.rules": input_verdict.rules})
                 agent_span.set_attribute("security.prompt_injection.suspected", True)
+                log_event(log, logging.WARNING, "guardrail.prompt_injection_suspected",
+                          f"question from {merchant_id} matches prompt-injection patterns {input_verdict.rules}; continuing with action guardrail armed",
+                          **{"merchant.id": merchant_id, "gen_ai.conversation.id": session_id, "guardrail.stage": "input", "guardrail.verdict": "flag",
+                             "guardrail.rules": input_verdict.rules, "security.prompt_injection.suspected": True, "copilot.question_length": len(question)})
             guardrail_counter.add(1, {"guardrail.stage": "input", "guardrail.verdict": input_verdict.verdict})
         result.guardrail["input"] = {"verdict": input_verdict.verdict, "rules": input_verdict.rules}
 
@@ -162,6 +170,8 @@ def _chat(provider, messages: list[dict], result: AgentResult) -> LLMResponse:
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.set_attribute("error.type", type(exc).__name__)
+            log_event(log, logging.ERROR, "copilot.llm_error", f"LLM call to {provider.name}/{provider.model} failed: {type(exc).__name__}: {exc}",
+                      **{"gen_ai.provider.name": provider.name, "gen_ai.request.model": provider.model, "error.type": type(exc).__name__, "error.message": str(exc)[:300]})
             raise
         duration = time.perf_counter() - t0
         dims = {"gen_ai.operation.name": "chat", "gen_ai.provider.name": provider.name, "gen_ai.request.model": response.model or provider.model}
@@ -209,6 +219,11 @@ def _execute_tool(name: str, call_id: str, arguments: dict, input_verdict: guard
             tool_calls_counter.add(1, {"gen_ai.tool.name": name, "outcome": "blocked"})
             record["guardrail"] = "block"
             result.tool_calls.append(record)
+            log_event(log, logging.WARNING, "guardrail.action_blocked",
+                      f"guardrail blocked tool {name} ({', '.join(verdict.rules)}): the model tried to move money for {arguments.get('payment_id', '?')}",
+                      **{"gen_ai.tool.name": name, "gen_ai.tool.call.id": call_id, "guardrail.stage": "action", "guardrail.verdict": "block",
+                         "guardrail.rules": verdict.rules, "payment.id": str(arguments.get("payment_id", "")),
+                         "security.prompt_injection.suspected": input_verdict.verdict == "flag"})
             return {"error": "blocked_by_guardrail", "rules": verdict.rules, "message": "This action requires approval by a TukTukPay operator."}
         fn = TOOLS.get(name)
         if fn is None:
@@ -226,6 +241,9 @@ def _execute_tool(name: str, call_id: str, arguments: dict, input_verdict: guard
             tool_calls_counter.add(1, {"gen_ai.tool.name": name, "outcome": "error"})
             record["error"] = str(exc)
             output = {"error": str(exc)}
+            log_event(log, logging.WARNING, "copilot.tool_error", f"tool {name} failed: {type(exc).__name__}: {exc}",
+                      **{"gen_ai.tool.name": name, "gen_ai.tool.call.id": call_id, "error.type": type(exc).__name__, "error.message": str(exc)[:300],
+                         "peer.service": "ledger"})
         if CAPTURE_CONTENT:
             span.set_attribute("gen_ai.tool.call.arguments", json.dumps(arguments)[:2000])
             span.set_attribute("gen_ai.tool.call.result", json.dumps(output, default=str)[:4000])

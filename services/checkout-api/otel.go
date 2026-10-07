@@ -10,17 +10,20 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// setupOTel wires the OpenTelemetry SDK: OTLP/gRPC exporters for traces and
-// metrics pointed at the Splunk Distribution of the OpenTelemetry Collector
+// setupOTel wires the OpenTelemetry SDK: OTLP/gRPC exporters for traces, metrics
+// and logs pointed at the Splunk Distribution of the OpenTelemetry Collector
 // (OTEL_EXPORTER_OTLP_ENDPOINT), a resource built from OTEL_RESOURCE_ATTRIBUTES
 // (deployment.environment, service.version ...) and W3C trace-context +
 // baggage propagation. Nothing here is Splunk-specific: the same binary can
@@ -66,12 +69,24 @@ func setupOTel(ctx context.Context) (func(context.Context) error, error) {
 	)
 	otel.SetMeterProvider(mp)
 
+	// Logs: the same resource and endpoint. logging.go bridges slog into this
+	// provider, so every log line reaches the collector with trace_id / span_id.
+	logExp, err := otlploggrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lp := sdklog.NewLoggerProvider(
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExp)),
+	)
+	global.SetLoggerProvider(lp)
+
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		tolerantTraceContext{}, propagation.Baggage{},
 	))
 
 	return func(ctx context.Context) error {
-		return errors.Join(tp.Shutdown(ctx), mp.Shutdown(ctx))
+		return errors.Join(tp.Shutdown(ctx), mp.Shutdown(ctx), lp.Shutdown(ctx))
 	}, nil
 }
 

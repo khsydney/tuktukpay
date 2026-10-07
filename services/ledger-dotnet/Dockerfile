@@ -12,8 +12,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 # Splunk OpenTelemetry .NET: download + install the auto-instrumentation.
+# The installer verifies release assets with the GitHub CLI unless told to skip (no gh in this image).
 RUN curl -sSfL https://github.com/signalfx/splunk-otel-dotnet/releases/latest/download/splunk-otel-dotnet-install.sh -O \
- && sh ./splunk-otel-dotnet-install.sh \
+ && SKIP_RELEASE_VERIFICATION=true sh ./splunk-otel-dotnet-install.sh \
  && rm splunk-otel-dotnet-install.sh
 COPY --from=build /app .
 EXPOSE 8084

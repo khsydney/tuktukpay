@@ -37,17 +37,16 @@ from pydantic import BaseModel, Field
 import amp
 from chaos import ChaosFlags
 from llm_providers import LLMResponse, ToolCall, build_provider, estimate_cost
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-logging.getLogger("httpx").setLevel(logging.WARNING)
-log = logging.getLogger("shopping-agent")
+log = setup_logging("shopping-agent")
 
 CHECKOUT_URL = os.getenv("CHECKOUT_URL", "http://localhost:8080").rstrip("/")
 WALLET_URL = os.getenv("WALLET_URL", "http://localhost:8088").rstrip("/")
 MERCHANT_URL = os.getenv("MERCHANT_SIM_URL", "http://localhost:8085").rstrip("/")
 SPLUNK_REALM = os.getenv("CONSOLE_SPLUNK_REALM", "")  # only for building trace links; never SPLUNK_REALM (the distro would bypass the collector)
 PROVIDER = os.getenv("AGENT_PROVIDER", "mock")
-MODEL = os.getenv("AGENT_MODEL", "")
+MODEL = os.getenv("AGENT_MODEL", "").split("#", 1)[0].strip()  # Compose keeps a trailing "# comment" when the value is empty
 GUARDRAIL_MODE = os.getenv("AGENT_GUARDRAIL", "flag")  # flag | strict
 MAX_ITER = int(os.getenv("AGENT_MAX_ITERATIONS", "8"))
 
@@ -247,10 +246,15 @@ def run_task(task_id: str, req: RunRequest):
     attack = req.attack or ""
     task["status"] = "running"
 
+    step_events = {"ok": (logging.INFO, "agent.step"), "attack": (logging.WARNING, "agent.attack_simulated"),
+                   "blocked": (logging.WARNING, "agent.blocked"), "warn": (logging.WARNING, "agent.untrusted_content")}
+
     def step(text, **extra):
         entry = {"t": time.strftime("%H:%M:%S"), "text": text, **extra}
         task["steps"].append(entry)
-        log.info("task %s: %s", task_id, text)
+        level, event = step_events.get(extra.get("kind", "ok"), (logging.INFO, "agent.step"))
+        log_event(log, level, event, text, **{"agent.task_id": task_id, "agent.id": spec.agent_id, "customer.id": spec.customer_id,
+                                              "amp.wallet": spec.wallet, "agent.attack_simulation": attack or "none"})
 
     provider = make_provider(req.provider or PROVIDER, req.model or MODEL, attack)
     with tracer.start_as_current_span(
@@ -409,7 +413,8 @@ def _run_in_context(ctx, task_id, req):
     try:
         run_task(task_id, req)
     except Exception as exc:  # noqa: BLE001
-        log.exception("task %s failed", task_id)
+        log_event(log, logging.ERROR, "agent.task_failed", f"shopping-agent task {task_id} crashed: {type(exc).__name__}: {exc}", exc_info=True,
+                  **{"agent.task_id": task_id, "agent.id": req.mandate.agent_id, "error.type": type(exc).__name__})
         TASKS[task_id].update({"status": "error", "outcome": "error", "detail": str(exc), "ended": time.time()})
     finally:
         context.detach(token)

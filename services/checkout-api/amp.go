@@ -97,7 +97,9 @@ func (s *Service) verifyMandate(ctx context.Context, token, agentID, paymentID, 
 		span.AddEvent("mandate.blocked", trace.WithAttributes(attribute.String("mandate.block_reason", reason), attribute.String("detail", detail)))
 		span.SetStatus(codes.Error, reason)
 		mandateCounter.Add(ctx, 1, metric.WithAttributeSet(metricAttrs("mandate.verdict", "blocked", "mandate.block_reason", reason, "amp.kya.rating", kyaRating(k, m))))
-		s.log.WarnContext(ctx, "mandate blocked", "payment_id", paymentID, "agent_id", agentID, "reason", reason, "detail", detail)
+		// createPayment logs the WARN outcome line with the full payment context; this is the check-level detail.
+		s.log.DebugContext(ctx, "mandate check failed: "+reason, "event", "mandate.check_failed", "payment.id", paymentID, "agent.id", agentID,
+			"mandate.block_reason", reason, "mandate.detail", detail)
 		return MandateResult{Verdict: "blocked", Reason: reason, Detail: detail, Mandate: m, KYA: k}
 	}
 
@@ -167,6 +169,10 @@ func (s *Service) verifyMandate(ctx context.Context, token, agentID, paymentID, 
 
 	span.SetAttributes(attribute.String("mandate.verdict", "allowed"), attribute.Int64("amp.mandate.use", uses))
 	mandateCounter.Add(ctx, 1, metric.WithAttributeSet(metricAttrs("mandate.verdict", "allowed", "mandate.block_reason", "none", "amp.kya.rating", k.Rating)))
+	s.log.InfoContext(ctx, fmt.Sprintf("mandate %s verified for agent %s (KYA %s, use %d/%d, ceiling %.2f %s)", m.TaskID, agentID, k.Rating, uses, maxUses, m.MaxAmount, m.Currency),
+		"event", "mandate.verified", "payment.id", paymentID, "agent.id", agentID, "amp.task_id", m.TaskID, "amp.kya.rating", k.Rating,
+		"kya.operator", k.Operator, "amp.wallet", m.Wallet, "amp.mandate.max_amount", m.MaxAmount, "amp.mandate.currency", m.Currency,
+		"amp.mandate.use", uses, "merchant.id", merchantID, "payment.amount", amount, "mandate.verdict", "allowed")
 	return MandateResult{Verdict: "allowed", Mandate: m, KYA: k}
 }
 

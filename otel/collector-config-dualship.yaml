@@ -43,6 +43,19 @@ processors:
       - action: upsert
         key: deployment.environment
         value: ${env:DEPLOYMENT_ENVIRONMENT}
+  # source = service name; lowercase `severity` for Log Observer Connect (see collector-config.yaml)
+  transform/logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["com.splunk.source"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+          - set(attributes["severity"], ConvertCase(severity_text, "lower")) where severity_text != nil
+          - set(attributes["severity"], "warn") where attributes["severity"] == "warning"
+          - set(attributes["severity"], "error") where attributes["severity"] == "severe" or attributes["severity"] == "err"
+          - set(attributes["severity"], "critical") where attributes["severity"] == "fatal"
+          - set(attributes["severity"], "info") where attributes["severity"] == "information" or attributes["severity"] == "info2" or attributes["severity"] == "info3" or attributes["severity"] == "info4"
+          - set(attributes["severity"], "debug") where attributes["severity"] == "fine" or attributes["severity"] == "finer" or attributes["severity"] == "finest" or attributes["severity"] == "trace" or attributes["severity"] == "debug2" or attributes["severity"] == "debug3" or attributes["severity"] == "debug4"
   filter/drop-chaos-polling:
     error_mode: ignore
     traces:
@@ -86,6 +99,24 @@ exporters:
       key: ${env:DD_API_KEY}
       site: ${env:DD_SITE}
     hostname: tuktukpay-workshop
+  # Logs to Splunk Cloud Platform (Log Observer Connect) — same settings as collector-config.yaml
+  splunk_hec:
+    token: ${env:SPLUNK_HEC_TOKEN}
+    endpoint: ${env:SPLUNK_HEC_URL}
+    index: ${env:SPLUNK_HEC_INDEX}
+    source: otel
+    sourcetype: otel
+    profiling_data_enabled: false
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 120s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 200
   debug:
     verbosity: basic
 
@@ -106,5 +137,5 @@ service:
       exporters: [signalfx, datadog]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, resourcedetection, resource/add_environment, batch]
-      exporters: [datadog]
+      processors: [memory_limiter, resourcedetection, resource/add_environment, transform/logs, batch]
+      exporters: [splunk_hec, datadog]

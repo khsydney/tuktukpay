@@ -12,10 +12,14 @@ const express = require('express');
 const { Pool } = require('pg');
 const { trace } = require('@opentelemetry/api');
 const { ChaosFlags } = require('./chaos');
+const { event } = require('./log');
 
-const chaos = new ChaosFlags(process.env.CHAOS_URL || 'http://localhost:8090');
+const chaos = new ChaosFlags(process.env.CHAOS_URL || 'http://localhost:8090', 2000, ['ledger_db_slow']);
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://tuktukpay:tuktukpay@localhost:5432/tuktukpay';
 const DEFAULT_POOL = Number(process.env.PG_POOL_SIZE || 10);
+const POOL_WAIT_WARN_MS = Number(process.env.POOL_WAIT_WARN_MS || 100);
+const SLOW_WRITE_MS = Number(process.env.SLOW_WRITE_MS || 500);
+const DB_HOST = (() => { try { return new URL(DATABASE_URL).hostname; } catch (e) { return 'postgres'; } })();
 
 // Two pools: the normal one and a deliberately tiny one used while the
 // `ledger_db_slow` chaos flag is on. Swapping pools lets the workshop show
@@ -30,10 +34,17 @@ function pool() {
     if (!pools.tiny || pools.tiny.options.max !== size) {
       if (pools.tiny) pools.tiny.end().catch(() => {});
       pools.tiny = new Pool({ connectionString: DATABASE_URL, max: size, application_name: 'ledger-degraded' });
+      event('warn', 'db.pool.reconfigured', `ledger connection pool to ${DB_HOST} reconfigured: max ${size} connections (was ${DEFAULT_POOL})`,
+        { 'db.system': 'postgresql', 'db.pool.max': size, 'db.pool.previous_max': DEFAULT_POOL, 'peer.service': 'postgres' });
     }
     return pools.tiny;
   }
   return pools.normal;
+}
+
+// Pool / query timing fields shared by the ledger log events.
+function dbFields(db) {
+  return { 'db.system': 'postgresql', 'peer.service': 'postgres', 'db.pool.max': db.options.max, 'db.pool.total': db.totalCount, 'db.pool.idle': db.idleCount, 'db.pool.waiting': db.waitingCount };
 }
 
 const app = express();
@@ -57,9 +68,22 @@ app.post('/v1/entries', async (req, res) => {
 
   const db = pool();
   const t0 = Date.now();
-  const client = await db.connect();
+  const paymentFields = { 'payment.id': p.payment_id, 'merchant.id': p.merchant_id, 'payment.outcome': p.status || 'unknown', 'payment.amount': Number(p.amount || 0), 'payment.currency': p.currency || '' };
+  let client;
+  try {
+    client = await db.connect();
+  } catch (e) {
+    event('error', 'db.connect_failed', `ledger could not get a database connection from ${DB_HOST} for payment ${p.payment_id}: ${e.message}`,
+      { ...paymentFields, ...dbFields(db), 'duration_ms': Date.now() - t0, 'error.type': e.code || e.name, 'error.message': e.message });
+    return res.status(503).json({ error: 'database unavailable' });
+  }
   const waitMs = Date.now() - t0;
   if (span) span.setAttributes({ 'db.pool.wait_ms': waitMs, 'db.pool.max': db.options.max, 'db.pool.waiting': db.waitingCount });
+  if (waitMs > POOL_WAIT_WARN_MS) {
+    // Act 5: the pool is too small for the write rate — requests queue for a connection.
+    event('warn', 'db.pool.wait', `payment ${p.payment_id} waited ${waitMs} ms for a database connection (pool max ${db.options.max}, ${db.waitingCount} requests still waiting)`,
+      { ...paymentFields, ...dbFields(db), 'db.pool.wait_ms': waitMs });
+  }
   try {
     await client.query('BEGIN');
     if (chaos.enabled('ledger_db_slow')) {
@@ -86,10 +110,19 @@ app.post('/v1/entries', async (req, res) => {
       );
     }
     await client.query('COMMIT');
+    const totalMs = Date.now() - t0;
+    if (totalMs > SLOW_WRITE_MS) {
+      event('warn', 'ledger.write_slow', `ledger write for payment ${p.payment_id} took ${totalMs} ms (${waitMs} ms waiting for a connection, ${totalMs - waitMs} ms in the transaction)`,
+        { ...paymentFields, ...dbFields(db), 'db.pool.wait_ms': waitMs, 'duration_ms': totalMs, 'db.operation': 'INSERT', 'db.collection.name': 'payments' });
+    } else {
+      event('debug', 'ledger.entry_recorded', `recorded payment ${p.payment_id} (${p.status}) in ${totalMs} ms`,
+        { ...paymentFields, ...dbFields(db), 'db.pool.wait_ms': waitMs, 'duration_ms': totalMs });
+    }
     res.status(201).json({ ok: true, payment_id: p.payment_id, pool_wait_ms: waitMs });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error(JSON.stringify({ level: 'error', msg: 'ledger write failed', payment_id: p.payment_id, error: e.message }));
+    event('error', 'ledger.write_failed', `ledger write failed for payment ${p.payment_id}: ${e.code ? `${e.code} ` : ''}${e.message}`,
+      { ...paymentFields, ...dbFields(db), 'db.pool.wait_ms': waitMs, 'duration_ms': Date.now() - t0, 'db.operation': 'INSERT', 'error.type': e.code || e.name, 'error.message': e.message });
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
@@ -102,6 +135,7 @@ app.get('/v1/payments/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'payment not found' });
     res.json(rows[0]);
   } catch (e) {
+    event('error', 'ledger.query_failed', `payment lookup failed for ${req.params.id}: ${e.message}`, { 'payment.id': req.params.id, 'db.system': 'postgresql', 'peer.service': 'postgres', 'error.type': e.code || e.name, 'error.message': e.message });
     res.status(500).json({ error: e.message });
   }
 });
@@ -119,6 +153,7 @@ app.get('/v1/payments', async (req, res) => {
     const { rows } = await pool().query(sql, params);
     res.json({ merchant_id, count: rows.length, payments: rows });
   } catch (e) {
+    event('error', 'ledger.query_failed', `recent payments query failed for ${merchant_id}: ${e.message}`, { 'merchant.id': merchant_id, 'db.system': 'postgresql', 'peer.service': 'postgres', 'error.type': e.code || e.name, 'error.message': e.message });
     res.status(500).json({ error: e.message });
   }
 });
@@ -138,9 +173,10 @@ app.get('/v1/merchants/:id/summary', async (req, res) => {
     const approved = rows.filter((r) => r.status === 'approved').reduce((s, r) => s + r.count, 0);
     res.json({ merchant_id: req.params.id, window_hours: hours, total, approved, approval_rate: total ? approved / total : null, breakdown: rows });
   } catch (e) {
+    event('error', 'ledger.query_failed', `merchant summary query failed for ${req.params.id}: ${e.message}`, { 'merchant.id': req.params.id, 'db.system': 'postgresql', 'peer.service': 'postgres', 'error.type': e.code || e.name, 'error.message': e.message });
     res.status(500).json({ error: e.message });
   }
 });
 
 const port = Number(process.env.PORT || 8084);
-app.listen(port, () => console.log(JSON.stringify({ level: 'info', msg: 'ledger listening', port, pool: DEFAULT_POOL })));
+app.listen(port, () => event('info', 'service.started', `ledger listening on :${port} (postgres ${DB_HOST}, pool max ${DEFAULT_POOL})`, { 'server.port': port, 'db.system': 'postgresql', 'db.pool.max': DEFAULT_POOL, 'peer.service': 'postgres' }));

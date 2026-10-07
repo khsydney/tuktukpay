@@ -27,10 +27,9 @@ from opentelemetry.propagate import extract
 from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("webhook-dispatcher")
-logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is too chatty for Log Observer
+log = setup_logging("webhook-dispatcher")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 STREAM = os.getenv("EVENT_STREAM", "payments.events")
@@ -39,6 +38,8 @@ CONSUMER = os.getenv("CONSUMER_NAME", socket.gethostname())
 MERCHANT_SIM_URL = os.getenv("MERCHANT_SIM_URL", "http://localhost:8085").rstrip("/")
 MAX_ATTEMPTS = int(os.getenv("WEBHOOK_MAX_ATTEMPTS", "3"))
 BACKOFF_S = [0.5, 1.0, 2.0]
+BACKLOG_WARN_MS = float(os.getenv("WEBHOOK_BACKLOG_WARN_MS", "10000"))
+_backlog_last_logged = 0.0  # the backlog line is rate-limited to one per 30 s, not one per message
 
 tracer = trace.get_tracer("tuktukpay.webhook-dispatcher")
 meter = metrics.get_meter("tuktukpay.webhook-dispatcher")
@@ -53,7 +54,8 @@ http_client = httpx.Client(timeout=httpx.Timeout(4.0))
 def ensure_group(r: redis.Redis):
     try:
         r.xgroup_create(STREAM, GROUP, id="$", mkstream=True)
-        log.info("created consumer group %s on %s", GROUP, STREAM)
+        log_event(log, logging.INFO, "stream.group_created", f"created consumer group {GROUP} on {STREAM}",
+                  **{"messaging.destination.name": STREAM, "messaging.consumer.group.name": GROUP})
     except redis.ResponseError as exc:
         if "BUSYGROUP" not in str(exc):
             raise
@@ -62,27 +64,37 @@ def ensure_group(r: redis.Redis):
 def deliver(event: dict) -> tuple[bool, int]:
     """POST the event to the merchant. Returns (delivered, attempts)."""
     merchant_id = event.get("merchant_id", "unknown")
+    payment_id = event.get("payment_id", "")
     url = f"{MERCHANT_SIM_URL}/webhooks/{merchant_id}"
     for attempt in range(1, MAX_ATTEMPTS + 1):
         with tracer.start_as_current_span("webhook.deliver", kind=SpanKind.INTERNAL) as span:
-            span.set_attributes({"webhook.attempt": attempt, "merchant.id": merchant_id, "webhook.url": url, "payment.id": event.get("payment_id", "")})
+            span.set_attributes({"webhook.attempt": attempt, "merchant.id": merchant_id, "webhook.url": url, "payment.id": payment_id})
+            fields = {"merchant.id": merchant_id, "payment.id": payment_id, "webhook.event_type": event.get("type", ""),
+                      "webhook.attempt": attempt, "webhook.max_attempts": MAX_ATTEMPTS, "webhook.url": url, "peer.service": "merchant-webhook"}
             t0 = time.perf_counter()
             try:
                 res = http_client.post(url, json=event, headers={"X-TukTukPay-Event": event.get("type", "payment.unknown"), "X-TukTukPay-Attempt": str(attempt)})
                 ms = (time.perf_counter() - t0) * 1000
                 span.set_attribute("http.response.status_code", res.status_code)
                 delivery_latency.record(ms, {"merchant.id": merchant_id})
+                fields.update({"http.response.status_code": res.status_code, "duration_ms": round(ms, 1)})
                 if res.status_code < 300:
                     deliveries.add(1, {"merchant.id": merchant_id, "outcome": "delivered", "webhook.attempt": attempt})
+                    log_event(log, logging.INFO if attempt > 1 else logging.DEBUG, "webhook.delivered",
+                              f"webhook {event.get('type', '')} for {payment_id} delivered to {merchant_id} on attempt {attempt} in {ms:.0f} ms", **fields)
                     return True, attempt
                 span.set_status(Status(StatusCode.ERROR, f"merchant returned {res.status_code}"))
                 deliveries.add(1, {"merchant.id": merchant_id, "outcome": "failed", "webhook.attempt": attempt})
-                log.warning("webhook to %s failed attempt=%d status=%d payment_id=%s", merchant_id, attempt, res.status_code, event.get("payment_id"))
+                log_event(log, logging.WARNING, "webhook.delivery_failed",
+                          f"merchant {merchant_id} returned HTTP {res.status_code} for webhook {payment_id} (attempt {attempt}/{MAX_ATTEMPTS}, {ms:.0f} ms)", **fields)
             except httpx.HTTPError as exc:
+                ms = (time.perf_counter() - t0) * 1000
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
                 deliveries.add(1, {"merchant.id": merchant_id, "outcome": "error", "webhook.attempt": attempt})
-                log.warning("webhook to %s errored attempt=%d payment_id=%s error=%s", merchant_id, attempt, event.get("payment_id"), exc)
+                log_event(log, logging.WARNING, "webhook.delivery_error",
+                          f"webhook to {merchant_id} for {payment_id} failed on attempt {attempt}/{MAX_ATTEMPTS}: {type(exc).__name__} {exc}",
+                          **fields, **{"duration_ms": round(ms, 1), "error.type": type(exc).__name__, "error.message": str(exc)})
         if attempt < MAX_ATTEMPTS:
             time.sleep(BACKOFF_S[min(attempt - 1, len(BACKOFF_S) - 1)] * (0.8 + random.random() * 0.4))
     return False, MAX_ATTEMPTS
@@ -117,6 +129,13 @@ def handle(r: redis.Redis, msg_id: str, fields: dict):
                     lag_ms = (datetime.now(timezone.utc) - datetime.fromisoformat(occurred.replace("Z", "+00:00"))).total_seconds() * 1000
                     stream_lag.record(max(lag_ms, 0), {"merchant.id": event.get("merchant_id", "unknown")})
                     span.set_attribute("messaging.lag_ms", round(lag_ms, 1))
+                    global _backlog_last_logged
+                    if lag_ms > BACKLOG_WARN_MS and time.time() - _backlog_last_logged > 30:
+                        _backlog_last_logged = time.time()
+                        log_event(log, logging.WARNING, "webhook.backlog",
+                                  f"webhook delivery is {lag_ms / 1000:.1f} s behind the payment stream (merchant {event.get('merchant_id', 'unknown')})",
+                                  **{"merchant.id": event.get("merchant_id", "unknown"), "payment.id": event.get("payment_id", ""),
+                                     "messaging.lag_ms": round(lag_ms, 1), "messaging.destination.name": STREAM})
             except Exception:  # noqa: BLE001
                 pass
 
@@ -126,7 +145,10 @@ def handle(r: redis.Redis, msg_id: str, fields: dict):
                 span.set_status(Status(StatusCode.ERROR, "webhook dead-lettered"))
                 r.xadd(f"{STREAM}.dlq", {"event": fields.get("event", "{}"), "attempts": attempts, "failed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, maxlen=10000, approximate=True)
                 deliveries.add(1, {"merchant.id": event.get("merchant_id", "unknown"), "outcome": "dead_letter", "webhook.attempt": attempts})
-                log.error("webhook dead-lettered payment_id=%s merchant=%s after %d attempts", event.get("payment_id"), event.get("merchant_id"), attempts)
+                log_event(log, logging.ERROR, "webhook.dead_lettered",
+                          f"webhook {event.get('type', '')} for {event.get('payment_id')} to {event.get('merchant_id')} dead-lettered after {attempts} attempts",
+                          **{"merchant.id": event.get("merchant_id", "unknown"), "payment.id": event.get("payment_id", ""),
+                             "webhook.event_type": event.get("type", ""), "webhook.attempts": attempts, "messaging.destination.name": f"{STREAM}.dlq"})
             r.xack(STREAM, GROUP, msg_id)
     finally:
         context.detach(token)
@@ -139,22 +161,26 @@ def main():
             ensure_group(r)
             break
         except redis.RedisError as exc:
-            log.warning("redis not ready (%s); retrying", exc)
+            log_event(log, logging.WARNING, "redis.unavailable", f"redis not ready ({exc}); retrying",
+                      **{"peer.service": "redis", "error.type": type(exc).__name__, "error.message": str(exc)})
             time.sleep(2)
-    log.info("webhook-dispatcher consuming %s as %s/%s -> %s", STREAM, GROUP, CONSUMER, MERCHANT_SIM_URL)
+    log_event(log, logging.INFO, "service.started", f"webhook-dispatcher consuming {STREAM} as {GROUP}/{CONSUMER} -> {MERCHANT_SIM_URL}",
+              **{"messaging.destination.name": STREAM, "messaging.consumer.group.name": GROUP, "webhook.max_attempts": MAX_ATTEMPTS})
     while True:
         try:
             batches = r.xreadgroup(GROUP, CONSUMER, {STREAM: ">"}, count=16, block=2000)
         except redis.RedisError as exc:
-            log.warning("redis read failed (%s); retrying", exc)
+            log_event(log, logging.WARNING, "redis.read_failed", f"redis read failed ({exc}); retrying",
+                      **{"peer.service": "redis", "error.type": type(exc).__name__, "error.message": str(exc)})
             time.sleep(1)
             continue
         for _stream, messages in batches or []:
             for msg_id, fields in messages:
                 try:
                     handle(r, msg_id, fields)
-                except Exception:  # noqa: BLE001
-                    log.exception("failed to process %s", msg_id)
+                except Exception as exc:  # noqa: BLE001
+                    log_event(log, logging.ERROR, "webhook.processing_failed", f"failed to process stream message {msg_id}: {exc}",
+                              exc_info=True, **{"messaging.message.id": msg_id, "error.type": type(exc).__name__})
                     r.xack(STREAM, GROUP, msg_id)
 
 

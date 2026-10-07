@@ -17,9 +17,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
  * TukTukPay payment-router — picks an acquirer for each payment, authorizes it,
@@ -27,16 +27,15 @@ import java.util.logging.Logger;
  * a PSP "payment orchestration" layer (think one API across many acquirers with
  * primary/backup routing).
  *
- * Deliberately plain Java (JDK HTTP server + client, no framework, no OpenTelemetry
- * code at all): every span you see for this service comes from the Splunk
- * Distribution of the OpenTelemetry Java agent attached with -javaagent. The
- * business attributes are exposed as response headers and captured by the agent
- * (OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS), then renamed by
- * the collector's transform processor into clean span tags.
+ * Deliberately plain Java (JDK HTTP server + client, no framework, no tracing code):
+ * every span you see for this service comes from the Splunk Distribution of the
+ * OpenTelemetry Java agent attached with -javaagent. The business attributes are
+ * exposed as response headers and captured by the agent
+ * (OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS), then renamed by the
+ * collector's transform processor into clean span tags. Structured logs go through
+ * Log.java (OpenTelemetry Logs API, bridged by the agent) — see docs/log-schema.md.
  */
 public final class RouterServer {
-    private static final Logger LOG = Logger.getLogger(RouterServer.class.getName());
-
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build();
     private final String acquirerBase;
     private final Duration acquirerTimeout;
@@ -86,7 +85,8 @@ public final class RouterServer {
         server.createContext("/v1/route", this::handleRoute);
         server.setExecutor(Executors.newFixedThreadPool(64));
         server.start();
-        LOG.info("payment-router listening on :" + port + " acquirers=" + acquirerBase);
+        Log.event(Log.Level.INFO, "service.started", "payment-router listening on :" + port + " (acquirers at " + acquirerBase + ", timeout " + acquirerTimeout.toMillis() + " ms)",
+                "server.port", port, "acquirer.base_url", acquirerBase, "acquirer.timeout_ms", acquirerTimeout.toMillis());
     }
 
     private void handleRoute(HttpExchange ex) throws IOException {
@@ -124,9 +124,14 @@ public final class RouterServer {
 
         for (int n = 0; n < candidates.size(); n++) {
             String acquirer = candidates.get(n);
+            String backup = n + 1 < candidates.size() ? candidates.get(n + 1) : null;
             long t0 = System.nanoTime();
             Map<String, Object> attempt = new LinkedHashMap<>();
             attempt.put("acquirer", acquirer);
+            // Fields every log line of this attempt carries (same names as the span tags).
+            Object[] base = {"payment.id", paymentId, "merchant.id", merchant, "payment.acquirer", acquirer, "peer.service", acquirer,
+                    "route.attempt", n + 1, "route.backup_acquirer", backup == null ? "none" : backup,
+                    "payment.card.bin", bin, "payment.card.network", network, "payment.currency", currency, "payment.method", method, "payment.amount", amount};
             try {
                 Map<String, Object> auth = authorize(acquirer, req);
                 long ms = (System.nanoTime() - t0) / 1_000_000;
@@ -138,8 +143,11 @@ public final class RouterServer {
                 attempts.add(attempt);
 
                 boolean retryable = "91".equals(code) || "96".equals(code) || "error".equals(status);
-                if (retryable && n + 1 < candidates.size()) {
-                    LOG.warning("acquirer " + acquirer + " returned " + code + " for " + paymentId + "; failing over");
+                if (retryable && backup != null) {
+                    Log.event(Log.Level.WARN, "route.failover",
+                            "acquirer " + acquirer + " answered " + code + " (" + Json.str(auth, "decline_reason", status) + ") for payment " + paymentId
+                                    + " after " + ms + " ms; failing over to " + backup,
+                            with(base, "acquirer.response_code", code, "acquirer.outcome", status, "duration_ms", ms, "route.failover", true));
                     result.put("failover", true);
                     continue;
                 }
@@ -155,9 +163,13 @@ public final class RouterServer {
                 attempt.put("response_code", "timeout");
                 attempt.put("latency_ms", ms);
                 attempts.add(attempt);
-                LOG.log(Level.WARNING, "acquirer " + acquirer + " timed out after " + ms + "ms for " + paymentId
-                        + " merchant=" + merchant + " bin=" + bin + " currency=" + currency);
-                if (n + 1 < candidates.size()) {
+                // The Act 1 smoking gun: which acquirer, which BIN, how long, and where the payment went next.
+                Log.event(Log.Level.WARN, "acquirer.timeout",
+                        "acquirer " + acquirer + " timed out after " + ms + " ms for payment " + paymentId + " (merchant " + merchant + ", BIN " + bin + " " + currency + ")"
+                                + (backup != null ? "; failing over to " + backup : "; no backup acquirer configured"),
+                        with(base, "acquirer.outcome", "timeout", "acquirer.timeout_ms", acquirerTimeout.toMillis(), "duration_ms", ms,
+                                "route.failover", backup != null, "error.type", "timeout"));
+                if (backup != null) {
                     result.put("failover", true);
                     continue;
                 }
@@ -170,8 +182,12 @@ public final class RouterServer {
                 attempt.put("response_code", e.getClass().getSimpleName());
                 attempt.put("latency_ms", ms);
                 attempts.add(attempt);
-                LOG.log(Level.SEVERE, "acquirer " + acquirer + " call failed for " + paymentId + ": " + e);
-                if (n + 1 < candidates.size()) {
+                Log.event(Log.Level.ERROR, "acquirer.error",
+                        "acquirer " + acquirer + " call failed for payment " + paymentId + " after " + ms + " ms: " + e
+                                + (backup != null ? "; failing over to " + backup : ""),
+                        with(base, "acquirer.outcome", "error", "duration_ms", ms, "route.failover", backup != null,
+                                "error.type", e.getClass().getSimpleName(), "error.message", String.valueOf(e.getMessage())));
+                if (backup != null) {
                     result.put("failover", true);
                     continue;
                 }
@@ -189,12 +205,44 @@ public final class RouterServer {
         headers.put("X-Route-Failover", String.valueOf(result.get("failover")));
         headers.put("X-Route-Outcome", String.valueOf(result.get("status")));
 
-        int code = "error".equals(result.get("status")) ? 502 : 200;
+        // One outcome line per routed payment, with every attempt summarised
+        // ("acq-kbank:timeout:timeout:2504ms,acq-uob:declined:05:98ms").
+        String status = String.valueOf(result.get("status"));
+        String summary = attempts.stream()
+                .map(a -> a.get("acquirer") + ":" + a.get("outcome") + ":" + a.get("response_code") + ":" + a.get("latency_ms") + "ms")
+                .collect(Collectors.joining(","));
+        Map<String, Object> last = attempts.isEmpty() ? Map.of() : attempts.get(attempts.size() - 1);
+        Object[] outcome = {"payment.id", paymentId, "merchant.id", merchant, "payment.acquirer", result.get("acquirer"),
+                "payment.outcome", status, "payment.decline_reason", result.get("decline_reason"), "route.attempts", attempts.size(),
+                "route.failover", result.get("failover"), "route.attempt_summary", summary, "acquirer.response_code", last.get("response_code"),
+                "duration_ms", last.get("latency_ms"), "payment.card.bin", bin, "payment.card.network", network, "payment.currency", currency,
+                "payment.method", method, "payment.amount", amount, "payment.initiator", Json.str(req, "initiator", "human")};
+        int code = "error".equals(status) ? 502 : 200;
         if (code == 502) {
-            LOG.severe("authorization failed at all acquirers payment_id=" + paymentId + " merchant=" + merchant
-                    + " amount=" + amount + " " + currency + " attempts=" + Json.write(attempts));
+            Log.event(Log.Level.ERROR, "route.failed",
+                    "authorisation failed at every acquirer for payment " + paymentId + " (merchant " + merchant + ", " + amount + " " + currency + "): "
+                            + result.get("decline_reason") + " — attempts " + summary,
+                    with(outcome, "http.response.status_code", 502));
+        } else if ("approved".equals(status)) {
+            Log.event(Log.Level.INFO, "route.authorised",
+                    "payment " + paymentId + " authorised by " + result.get("acquirer") + " on attempt " + attempts.size() + " (response " + last.get("response_code")
+                            + ", " + last.get("latency_ms") + " ms; merchant " + merchant + ", " + amount + " " + currency + ")",
+                    with(outcome, "http.response.status_code", 200));
+        } else {
+            Log.event(Log.Level.INFO, "route.declined",
+                    "payment " + paymentId + " declined by " + result.get("acquirer") + ": response " + last.get("response_code") + " " + result.get("decline_reason")
+                            + (Boolean.TRUE.equals(result.get("failover")) ? " (after failover)" : "") + "; merchant " + merchant + ", " + amount + " " + currency,
+                    with(outcome, "http.response.status_code", 200));
         }
         respond(ex, code, Json.write(result), headers);
+    }
+
+    /** Concatenates key/value pairs for Log.event. */
+    private static Object[] with(Object[] base, Object... extra) {
+        Object[] all = new Object[base.length + extra.length];
+        System.arraycopy(base, 0, all, 0, base.length);
+        System.arraycopy(extra, 0, all, base.length, extra.length);
+        return all;
     }
 
     private Map<String, Object> authorize(String acquirer, Map<String, Object> req) throws Exception {
@@ -229,6 +277,6 @@ public final class RouterServer {
         String chaosUrl = System.getenv().getOrDefault("CHAOS_URL", "http://localhost:8090");
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8082"));
         long timeoutMs = Long.parseLong(System.getenv().getOrDefault("ACQUIRER_TIMEOUT_MS", "2500"));
-        new RouterServer(acquirers, Duration.ofMillis(timeoutMs), new ChaosFlags(chaosUrl)).start(port);
+        new RouterServer(acquirers, Duration.ofMillis(timeoutMs), new ChaosFlags(chaosUrl, Set.of("router_failover_disabled"))).start(port);
     }
 }

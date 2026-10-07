@@ -229,7 +229,7 @@ const ACTS = {
   act1: {
     icon: '💳', kicker: 'Act 1', title: 'The one-in-ten-thousand decline',
     line: 'It is the 11.11 sale. Traffic is 10× bigger. Most payments are fine, but some Thai card payments become slow and then fail.',
-    skills: ['Tag Spotlight', 'Trace view', 'Trace Analyzer', 'AI Assistant'],
+    skills: ['Tag Spotlight', 'Trace view', 'Trace Analyzer', 'Log Observer', 'AI Assistant'],
     story: [
       { icon: '🎉', head: '11.11 sale', text: '10× more shoppers at the same time.' },
       { icon: '😟', head: 'Some payments fail', text: 'Only a very small group. Everyone else is fine.', tone: 'bad' },
@@ -263,7 +263,8 @@ const ACTS = {
       { icon: '🏷️', title: 'Make the business tags searchable', where: 'Settings → APM MetricSets → add these tags.', chips: ['merchant.id', 'payment.card.bin', 'payment.acquirer', 'payment.currency'] },
       { icon: '🔦', title: 'Find the red group', where: 'APM → checkout-api → Tag Spotlight. Sort by error rate and latency.' },
       { icon: '🧵', title: 'Open one slow payment', where: 'Look inside payment-router. How many bank calls? Which one waited?', chips: ['route.attempts', 'route.failover'] },
-      { icon: '🤖', title: 'Ask the AI to check you', where: 'AI Assistant: "Why is p90 latency high for checkout-api in the last 15 minutes?"' },
+      { icon: '📜', title: 'Read the line that explains it', where: 'Trace → Related Content → Logs for this trace. Or Log Observer: event=acquirer.timeout. Which bank, which BIN, where did the payment go next?', chips: ['event=acquirer.timeout', 'route.backup_acquirer', 'event=config.changed'] },
+      { icon: '🤖', title: 'Ask the AI to check you', where: 'The payment-router latency alert → AI Troubleshooting Agent → Evidence. Or AI Assistant: "Why is p90 latency high for payment-router in the last 15 minutes? Use APM data and logs."' },
     ],
     answer: [
       { icon: '🏬', text: 'Merchant: thai-airways', chips: ['merchant.id=thai-airways'] },
@@ -282,7 +283,7 @@ const ACTS = {
   act2: {
     icon: '🧠', kicker: 'Act 2', title: 'The model that drifted',
     line: 'The fraud team tests a new AI fraud model on 1 of every 5 payments. Approvals start to drop, but only for some payments.',
-    skills: ['Charts', 'Tag Spotlight', 'AlwaysOn Profiling', 'AI Troubleshooting Agent'],
+    skills: ['Charts', 'Tag Spotlight', 'AlwaysOn Profiling', 'Log Observer', 'AI Troubleshooting Agent'],
     story: [
       { icon: '🧪', head: 'New model test', text: 'Model v3 checks 20% of payments. v2 checks the rest.' },
       { icon: '📉', head: 'Approvals drop', text: 'More payments get "NO". Merchants lose sales.', tone: 'bad' },
@@ -317,6 +318,7 @@ const ACTS = {
       { icon: '📊', title: 'Chart the business result', where: 'Approval rate, split by model version.', chips: ['tuktukpay.payments.count', 'risk.model_version'] },
       { icon: '🔦', title: 'Compare v2 and v3', where: 'APM → risk-engine → Tag Spotlight. Then look at method and currency.', chips: ['risk.model_version', 'payment.method', 'payment.currency'] },
       { icon: '🔥', title: 'Find the hot code', where: 'risk-engine → AlwaysOn Profiling (CPU). Which function is biggest?' },
+      { icon: '📜', title: 'What changed, and when?', where: 'Log Observer: event=config.changed, then event=risk.canary_inference. The log says who turned on v3 and how slow it is.', chips: ['event=config.changed', 'risk.model_version=v3', 'risk.inference_ms'] },
       { icon: '🤖', title: 'Let the AI explain', where: 'Create a latency detector (150 ms). When it fires, open the AI Troubleshooting Agent.' },
     ],
     answer: [
@@ -336,7 +338,7 @@ const ACTS = {
   act3: {
     icon: '💸', kicker: 'Act 3', title: 'The copilot bill',
     line: 'Merchants ask an AI helper: "Why did this payment fail?". Today the AI gets stuck and costs much more. Someone also tries to trick it into giving a refund.',
-    skills: ['AI agent traces', 'Token and cost charts', 'Trace Analyzer', 'Agent Observability'],
+    skills: ['AI agent traces', 'Token and cost charts', 'Trace Analyzer', 'Log Observer', 'Agent Observability'],
     story: [
       { icon: '💬', head: 'Merchant asks', text: '"Why did payment X fail?"' },
       { icon: '🔁', head: 'AI goes in circles', text: 'It looks up the same payment again and again.', tone: 'bad' },
@@ -375,6 +377,7 @@ const ACTS = {
       { icon: '🧵', title: 'Open one slow AI question', where: 'APM → merchant-copilot → Traces → slow POST /v1/ask. Count the chat and tool steps.', chips: ['invoke_agent', 'chat', 'execute_tool get_payment'] },
       { icon: '📈', title: 'Chart tokens and cost', where: 'By token type and by merchant. When did it jump?', chips: ['gen_ai.client.token.usage', 'tuktukpay.copilot.cost_usd'] },
       { icon: '🛡️', title: 'Find the blocked trick', where: 'Trace Analyzer on merchant-copilot.', chips: ['guardrail.verdict=block', 'security.prompt_injection.suspected=true'] },
+      { icon: '📜', title: 'Count the loop in the logs', where: 'Log Observer: event=copilot.tool_loop_suspected (how many times the same tool?) and event=guardrail.action_blocked.', chips: ['copilot.iterations', 'gen_ai.tool.names', 'guardrail.action_blocked'] },
       { icon: '🔗', title: 'See the link', where: 'The AI step and the ledger call are in the same trace.' },
     ],
     answer: [
@@ -393,7 +396,7 @@ const ACTS = {
   act4: {
     icon: '🤖', kicker: 'Act 4', title: 'Agents are buying',
     line: 'AI shopping agents now pay for people. The wallet gives each agent a permission slip with a money limit. TukTukPay checks the slip on every payment.',
-    skills: ['Agentic Checkout Console', 'End-to-end trace', 'Tag Spotlight', 'AI Assistant detector'],
+    skills: ['Agentic Checkout Console', 'End-to-end trace', 'Tag Spotlight', 'Log Observer', 'AI Assistant detector'],
     story: [
       { icon: '👤', head: 'Customer asks', text: '"Buy the cheapest flight. Max 6,000 THB."' },
       { icon: '📝', head: 'Wallet gives a slip', text: 'Which agent, how much, which shop, 15 minutes, one use.' },
@@ -434,6 +437,7 @@ const ACTS = {
       { icon: '🧵', title: 'Follow the money in one trace', where: 'Wallet → agent → shop → mandate check → risk → bank → ledger → webhook.', chips: ['amp.verify_mandate', 'mandate.verdict'] },
       { icon: '🦹', title: 'Press the attack buttons', where: 'Overspend, poisoned listing, replay, forged token, wrong merchant, expired… Where is each one stopped?' },
       { icon: '🔦', title: 'See the whole fleet', where: 'checkout-api → Tag Spotlight.', chips: ['payment.initiator', 'agent.protocol', 'agent.verified', 'mandate.block_reason'] },
+      { icon: '📜', title: 'The governance trail', where: 'Log Observer: event=mandate.blocked — group by mandate.block_reason and agent.id. Every refusal is one line with the slip and the reason.', chips: ['event=mandate.blocked', 'agent.id', 'amp.task_id'] },
     ],
     answer: [
       { icon: '🤖', text: 'About 25% of payments come from agents.', chips: ['payment.initiator=agent'] },
@@ -452,7 +456,7 @@ const ACTS = {
   act4b: {
     icon: '📇', kicker: 'Act 4b', title: 'The agent list goes down',
     line: 'The Know-Your-Agent service stops working. TukTukPay cannot check agents, so it blocks every agent payment to stay safe.',
-    skills: ['AI Troubleshooting Agent', 'Tag Spotlight', 'Trace view'],
+    skills: ['AI Troubleshooting Agent', 'Log Observer', 'Tag Spotlight', 'Trace view'],
     story: [
       { icon: '🤖', head: 'Agents pay', text: 'A quarter of payments come from AI agents.' },
       { icon: '💥', head: 'Agent list is down', text: 'The trusted-agent check stops answering.', spoiler: true, tone: 'bad' },
@@ -483,6 +487,7 @@ const ACTS = {
       { icon: '🚨', title: 'Start from the alert', where: 'Open the mandate-block alert → AI Troubleshooting Agent.' },
       { icon: '🔦', title: 'Why are they blocked?', where: 'checkout-api → Tag Spotlight.', chips: ['mandate.block_reason'] },
       { icon: '🧵', title: 'Find the broken call', where: 'Open one blocked trace. Which call returns an error?' },
+      { icon: '📜', title: 'Who said 503?', where: 'Log Observer: event=kya.registry_unavailable (wallet-sim) and mandate.block_reason=mandate_kya_unavailable (checkout-api). Same trace id.', chips: ['event=kya.registry_unavailable', 'peer.service=wallet-sim'] },
       { icon: '🗣️', title: 'Discuss', where: 'Should 2C2P fail closed (lose sales) or fail open (lose safety)?' },
     ],
     answer: [
@@ -501,7 +506,7 @@ const ACTS = {
   act5: {
     icon: '🙋', kicker: 'Act 5', title: 'Ask, don\'t dig',
     line: 'Two problems at the same time. Half the team may only click the normal screens. The other half may only ask the AI. Who finds the cause first?',
-    skills: ['AI Assistant', 'AI Troubleshooting Agent', 'Database Query Performance', 'Tag Spotlight'],
+    skills: ['AI Assistant', 'AI Troubleshooting Agent', 'Database Query Performance', 'Log Observer', 'Tag Spotlight'],
     story: [
       { icon: '⏳', head: 'Payments slower', text: 'The banks are fine, but checkout is slow.', tone: 'bad' },
       { icon: '📭', head: 'A shop is missing news', text: 'One merchant does not get "payment done" messages.', tone: 'bad' },
@@ -540,6 +545,8 @@ const ACTS = {
       { who: 'Team AI', icon: '💬', title: 'Ask in plain words', where: '"Which database queries in ledger got slower in the last 15 minutes?" · "Which merchant has the most failed webhook deliveries?"' },
       { who: 'Team Click', icon: '🐘', title: 'Database Query Performance', where: 'ledger → which statement got slow? Check the pool on the span.', chips: ['db.pool.wait_ms', 'db.pool.max'] },
       { who: 'Team Click', icon: '🔦', title: 'Which merchant?', where: 'webhook-dispatcher → Tag Spotlight. Chart deliveries by outcome.', chips: ['merchant.id', 'webhook.attempt', 'tuktukpay.webhooks.deliveries'] },
+      { who: 'Team AI', icon: '📜', title: 'Check the evidence', where: 'AI Troubleshooting Agent → Evidence tab: the ledger and webhook log lines it used. Do you agree?', chips: ['event=db.pool.wait', 'event=webhook.dead_lettered'] },
+      { who: 'Team Click', icon: '📜', title: 'Read the logs', where: 'Log Observer: event=db.pool.wait, ledger.write_slow, merchant.webhook_error, webhook.dead_lettered.', chips: ['db.pool.max', 'db.pool.waiting', 'merchant.id=lazada-th'] },
     ],
     answer: [
       { icon: '🐢', text: 'Ledger pool is only 2 connections. INSERT is ≈ 250 ms slower (pg_sleep). Requests queue.', chips: ['INSERT INTO payments', 'db.pool.max=2'] },

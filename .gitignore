@@ -14,3 +14,4 @@ workshop/
 *.md
 !/README.md
 !/services/checkout-api/README.md
+!/docs/*.md

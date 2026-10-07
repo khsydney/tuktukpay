@@ -18,11 +18,29 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
     o.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
+// Structured logs (docs/log-schema.md): one JSON line per event on stdout with TraceId /
+// SpanId scopes; the Splunk .NET auto-instrumentation also exports every ILogger record
+// over OTLP (OTEL_DOTNET_AUTO_LOGS_ENABLED, default on) with the message-template
+// properties as attributes and the trace context attached.
+builder.Logging.ClearProviders();
+builder.Logging.AddJsonConsole(o =>
+{
+    o.IncludeScopes = true;
+    o.UseUtcTimestamp = true;
+    o.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+});
+builder.Logging.Configure(o => o.ActivityTrackingOptions = ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 var app = builder.Build();
+var log = app.Logger;
 
-var chaos = new ChaosFlags(Environment.GetEnvironmentVariable("CHAOS_URL") ?? "http://localhost:8090");
-var connString = ToNpgsql(Environment.GetEnvironmentVariable("DATABASE_URL") ?? "postgres://tuktukpay:tuktukpay@localhost:5432/tuktukpay");
+var chaos = new ChaosFlags(Environment.GetEnvironmentVariable("CHAOS_URL") ?? "http://localhost:8090", log, new[] { "ledger_db_slow" });
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL") ?? "postgres://tuktukpay:tuktukpay@localhost:5432/tuktukpay";
+var connString = ToNpgsql(databaseUrl);
+var dbHost = Uri.TryCreate(databaseUrl, UriKind.Absolute, out var dbUri) ? dbUri.Host : "postgres";
 var defaultPool = int.Parse(Environment.GetEnvironmentVariable("PG_POOL_SIZE") ?? "10");
+var poolWaitWarnMs = int.Parse(Environment.GetEnvironmentVariable("POOL_WAIT_WARN_MS") ?? "100");
+var slowWriteMs = int.Parse(Environment.GetEnvironmentVariable("SLOW_WRITE_MS") ?? "500");
 
 var normal = new NpgsqlDataSourceBuilder(connString + $";Maximum Pool Size={defaultPool};Application Name=ledger-dotnet").Build();
 NpgsqlDataSource? tiny = null;
@@ -37,9 +55,13 @@ NpgsqlDataSource Pool()
         tiny?.Dispose();
         tiny = new NpgsqlDataSourceBuilder(connString + $";Maximum Pool Size={size};Application Name=ledger-dotnet-degraded").Build();
         tinySize = size;
+        log.LogWarning("{event}: ledger connection pool to {db.host} reconfigured: max {db.pool.max} connections (was {db.pool.previous_max})",
+            "db.pool.reconfigured", dbHost, size, defaultPool);
     }
     return tiny;
 }
+
+int PoolMax() => chaos.Enabled("ledger_db_slow") ? tinySize : defaultPool;
 
 app.MapGet("/healthz", async () =>
 {
@@ -67,8 +89,26 @@ app.MapPost("/v1/entries", async (EntryRequest p) =>
 
     var ds = Pool();
     var sw = Stopwatch.StartNew();
-    await using var conn = await ds.OpenConnectionAsync();
-    activity?.SetTag("db.pool.wait_ms", sw.ElapsedMilliseconds);
+    NpgsqlConnection conn;
+    try
+    {
+        conn = await ds.OpenConnectionAsync();
+    }
+    catch (Exception e)
+    {
+        log.LogError(e, "{event}: ledger could not get a database connection from {db.host} for payment {payment.id} after {duration_ms} ms: {error.message}",
+            "db.connect_failed", dbHost, p.PaymentId, sw.ElapsedMilliseconds, e.Message);
+        return Results.Json(new { error = "database unavailable" }, statusCode: 503);
+    }
+    await using var _ = conn;
+    var waitMs = sw.ElapsedMilliseconds;
+    activity?.SetTag("db.pool.wait_ms", waitMs);
+    if (waitMs > poolWaitWarnMs)
+    {
+        // Act 5: the pool is too small for the write rate — requests queue for a connection.
+        log.LogWarning("{event}: payment {payment.id} waited {db.pool.wait_ms} ms for a database connection (pool max {db.pool.max}, merchant {merchant.id})",
+            "db.pool.wait", p.PaymentId, waitMs, PoolMax(), p.MerchantId);
+    }
     await using var tx = await conn.BeginTransactionAsync();
     try
     {
@@ -120,12 +160,19 @@ app.MapPost("/v1/entries", async (EntryRequest p) =>
         }
 
         await tx.CommitAsync();
-        return Results.Created($"/v1/payments/{p.PaymentId}", new { ok = true, payment_id = p.PaymentId, pool_wait_ms = sw.ElapsedMilliseconds });
+        var totalMs = sw.ElapsedMilliseconds;
+        if (totalMs > slowWriteMs)
+            log.LogWarning("{event}: ledger write for payment {payment.id} took {duration_ms} ms ({db.pool.wait_ms} ms waiting for a connection, pool max {db.pool.max}, merchant {merchant.id})",
+                "ledger.write_slow", p.PaymentId, totalMs, waitMs, PoolMax(), p.MerchantId);
+        else
+            log.LogDebug("{event}: recorded payment {payment.id} ({payment.outcome}) in {duration_ms} ms", "ledger.entry_recorded", p.PaymentId, p.Status ?? "unknown", totalMs);
+        return Results.Created($"/v1/payments/{p.PaymentId}", new { ok = true, payment_id = p.PaymentId, pool_wait_ms = waitMs });
     }
     catch (Exception e)
     {
         await tx.RollbackAsync();
-        app.Logger.LogError(e, "ledger write failed payment_id={PaymentId}", p.PaymentId);
+        log.LogError(e, "{event}: ledger write failed for payment {payment.id} (merchant {merchant.id}) after {duration_ms} ms: {error.type} {error.message}",
+            "ledger.write_failed", p.PaymentId, p.MerchantId, sw.ElapsedMilliseconds, e.GetType().Name, e.Message);
         return Results.Json(new { error = e.Message }, statusCode: 500);
     }
 });
@@ -184,7 +231,10 @@ app.MapGet("/v1/merchants/{id}/summary", async (string id, int? hours) =>
     return Results.Ok(new { merchant_id = id, window_hours = window, total, approved, approval_rate = total == 0 ? (double?)null : (double)approved / total, breakdown = rows });
 });
 
-app.Run($"http://0.0.0.0:{Environment.GetEnvironmentVariable("PORT") ?? "8084"}");
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8084";
+log.LogInformation("{event}: ledger (.NET {runtime}) listening on :{server.port} (postgres {db.host}, pool max {db.pool.max})",
+    "service.started", Environment.Version, port, dbHost, defaultPool);
+app.Run($"http://0.0.0.0:{port}");
 
 static Dictionary<string, object?> ReadPayment(NpgsqlDataReader r)
 {

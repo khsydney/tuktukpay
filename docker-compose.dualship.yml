@@ -8,5 +8,8 @@ services:
     environment:
       DD_API_KEY: ${DD_API_KEY:?set DD_API_KEY in .env for dual-shipping}
       DD_SITE: ${DD_SITE:-datadoghq.com}
+      SPLUNK_HEC_URL: ${SPLUNK_HEC_URL:-https://ingest.${SPLUNK_REALM}.observability.splunkcloud.com/v1/log}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:-${SPLUNK_ACCESS_TOKEN}}
+      SPLUNK_HEC_INDEX: ${SPLUNK_HEC_INDEX:-}
     volumes:
       - ./otel/collector-config-dualship.yaml:/etc/otel/collector-config-dualship.yaml:ro

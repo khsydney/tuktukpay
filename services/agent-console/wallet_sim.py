@@ -24,11 +24,11 @@ from pydantic import BaseModel, Field
 
 import amp
 from chaos import ChaosFlags
+from tuktuk_logging import log_event, setup_logging
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("wallet-sim")
+log = setup_logging("wallet-sim")
 
-chaos = ChaosFlags()
+chaos = ChaosFlags(watch={"kya_registry_down"})
 meter = metrics.get_meter("tuktukpay.wallet-sim")
 mandates_issued = meter.create_counter("tuktukpay.wallet.mandates_issued", description="Task mandates issued by the wallet")
 kya_lookups = meter.create_counter("tuktukpay.wallet.kya_lookups", description="Know-Your-Agent lookups by outcome")
@@ -76,15 +76,23 @@ def kya(agent_id: str):
     if chaos.enabled("kya_registry_down"):
         kya_lookups.add(1, {"outcome": "unavailable"})
         span.set_attribute("kya.outcome", "unavailable")
-        log.error("KYA registry backend unavailable (simulated) for agent %s", agent_id)
+        # The Act 4b smoking gun: the registry's backend is down, so every verification fails closed.
+        log_event(log, logging.ERROR, "kya.registry_unavailable",
+                  f"Know-Your-Agent lookup for {agent_id} failed: registry database unreachable (connection refused); returning 503",
+                  **{"agent.id": agent_id, "kya.outcome": "unavailable", "http.response.status_code": 503,
+                     "peer.service": "kya-registry-db", "error.type": "RegistryUnavailable"})
         raise HTTPException(503, "KYA registry unavailable")
     entry = KYA_REGISTRY.get(agent_id)
     if not entry:
         kya_lookups.add(1, {"outcome": "unknown"})
         span.set_attributes({"kya.outcome": "unknown", "kya.rating": "none"})
+        log_event(log, logging.WARNING, "kya.agent_unknown", f"Know-Your-Agent lookup: {agent_id} is not registered with this wallet",
+                  **{"agent.id": agent_id, "kya.outcome": "unknown", "kya.rating": "none"})
         return {"agent_id": agent_id, "registered": False, "rating": "none", "operator": "unknown"}
     kya_lookups.add(1, {"outcome": "found", "kya.rating": entry["rating"]})
     span.set_attributes({"kya.outcome": "found", "kya.rating": entry["rating"]})
+    log_event(log, logging.DEBUG, "kya.lookup", f"Know-Your-Agent lookup: {agent_id} rated {entry['rating']} ({entry['operator']})",
+              **{"agent.id": agent_id, "kya.outcome": "found", "kya.rating": entry["rating"], "kya.operator": entry["operator"]})
     return {"agent_id": agent_id, **entry}
 
 
@@ -101,7 +109,10 @@ def issue_mandate(req: MandateRequest):
     if not entry or not entry["registered"]:
         mandates_issued.add(1, {"outcome": "refused", "reason": "agent_not_registered"})
         span.set_attribute("amp.issue.outcome", "refused_unregistered_agent")
-        log.warning("refused mandate for unregistered agent %s (customer %s)", req.agent_id, req.customer_id)
+        log_event(log, logging.WARNING, "mandate.refused",
+                  f"refused task mandate for unregistered agent {req.agent_id} (customer {req.customer_id}, wallet {req.wallet})",
+                  **{"agent.id": req.agent_id, "customer.id": req.customer_id, "amp.wallet": req.wallet, "amp.issue.outcome": "refused_unregistered_agent",
+                     "amp.mandate.max_amount": req.max_amount, "amp.mandate.currency": req.currency})
         raise HTTPException(403, f"agent {req.agent_id} is not registered with this wallet (Know-Your-Agent)")
     if req.wallet not in WALLETS:
         raise HTTPException(400, f"unknown wallet {req.wallet}")
@@ -113,8 +124,12 @@ def issue_mandate(req: MandateRequest):
     span.set_attributes({"amp.task_id": payload["task_id"], "amp.kya.rating": entry["rating"], "amp.issue.outcome": "issued"})
     mandates_issued.add(1, {"outcome": "issued", "amp.wallet": req.wallet, "kya.rating": entry["rating"]})
     ISSUED.append({**payload, "issued_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
-    log.info("issued task mandate %s to %s (KYA %s) for %s: max %.2f %s, merchants=%s, ttl=%ss",
-             payload["task_id"], req.agent_id, entry["rating"], req.customer_id, req.max_amount, req.currency, req.merchants, req.ttl_s)
+    log_event(log, logging.INFO, "mandate.issued",
+              f"issued task mandate {payload['task_id']} to {req.agent_id} (KYA {entry['rating']}) for {req.customer_id}: max {req.max_amount:.2f} {req.currency}, merchants {req.merchants or 'any'}, {req.max_uses} use, ttl {req.ttl_s}s",
+              **{"amp.task_id": payload["task_id"], "agent.id": req.agent_id, "amp.kya.rating": entry["rating"], "kya.operator": entry["operator"],
+                 "customer.id": req.customer_id, "amp.wallet": req.wallet, "amp.mandate.max_amount": req.max_amount, "amp.mandate.currency": req.currency,
+                 "amp.mandate.merchants": req.merchants, "amp.mandate.category": req.category, "amp.mandate.ttl_s": req.ttl_s, "amp.mandate.max_uses": req.max_uses,
+                 "amp.issue.outcome": "issued"})
     return {"token": token, "mandate": payload}
 
 

@@ -33,4 +33,15 @@ curl -sf -m 60 -X POST "$COPILOT/v1/ask" -H 'Content-Type: application/json' \
 
 echo "== chaos flags"
 curl -sf -m 5 "$CHAOS/flags" | head -c 300; echo
+
+echo "== logs pipeline (collector -> Splunk HEC)"
+if command -v docker >/dev/null 2>&1 && docker inspect otel-collector >/dev/null 2>&1; then
+  sleep 5   # let the batch processor flush the records from the requests above
+  docker run --rm --network container:otel-collector curlimages/curl:8.10.1 -s http://127.0.0.1:8888/metrics \
+    | grep -E '^otelcol_exporter_(sent|send_failed)_log_records' | grep -v profiling \
+    | sed -E 's/\{[^}]*\}//' || echo "collector metrics not reachable (skipped)"
+  echo "   expect sent_log_records > 0 and send_failed_log_records absent/0; then search index=\$SPLUNK_HEC_INDEX in Splunk"
+else
+  echo "   docker not available here: skipped"
+fi
 echo "smoke test passed"

@@ -4,6 +4,10 @@ Every service polls GET {CHAOS_URL}/flags every ~2s in a background thread and
 keeps the last good copy in memory, so a request never waits on the controller.
 The poll uses urllib so it can be excluded from tracing with
 OTEL_PYTHON_URLLIB_EXCLUDED_URLS=chaos-controller (see docker-compose.yml).
+
+Flag transitions for the flags a service consumes (`watch`) are logged as
+`config.changed` events — the "feature flag flipped at 10:02" breadcrumb a real
+platform would have in its logs, and the one an AI root-cause analysis latches onto.
 """
 
 import json
@@ -17,11 +21,13 @@ log = logging.getLogger("chaos")
 
 
 class ChaosFlags:
-    def __init__(self, url: str | None = None, interval: float = 2.0):
+    def __init__(self, url: str | None = None, interval: float = 2.0, watch: set[str] | None = None):
         base = (url or os.getenv("CHAOS_URL", "http://localhost:8090")).rstrip("/")
         self.url = f"{base}/flags"
         self.interval = interval
+        self.watch = set(watch or ())
         self._flags: dict = {}
+        self._known: dict = {}
         self._lock = threading.Lock()
         self._last_error = None
         threading.Thread(target=self._loop, name="chaos-poller", daemon=True).start()
@@ -33,14 +39,30 @@ class ChaosFlags:
                     data = json.loads(resp.read().decode())
                 with self._lock:
                     self._flags = data
+                self._log_transitions(data)
                 if self._last_error:
-                    log.info("chaos-controller reachable again")
+                    log.debug("chaos-controller reachable again")
                     self._last_error = None
             except Exception as exc:  # noqa: BLE001 - never let chaos polling break the app
                 if str(exc) != self._last_error:
-                    log.warning("chaos-controller unreachable (%s); keeping last flags", exc)
+                    log.debug("chaos-controller unreachable (%s); keeping last flags", exc)
                     self._last_error = str(exc)
             time.sleep(self.interval)
+
+    def _log_transitions(self, data: dict):
+        for name in self.watch:
+            flag = data.get(name) or {}
+            current = (bool(flag.get("enabled", False)), json.dumps(flag.get("params", {}), sort_keys=True))
+            previous = self._known.get(name)
+            self._known[name] = current
+            if previous is None or previous == current:
+                continue
+            enabled, params = current
+            params_text = " ".join(f"{k}={v}" for k, v in sorted(json.loads(params).items()))
+            log.info(
+                "feature flag %s %s%s", name, "enabled" if enabled else "disabled", f": {params_text}" if enabled and params_text else "",
+                extra={"event": "config.changed", "feature_flag.name": name, "feature_flag.enabled": enabled, "feature_flag.params": params},
+            )
 
     def snapshot(self) -> dict:
         with self._lock:
