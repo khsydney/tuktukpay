@@ -91,7 +91,7 @@ Then in Splunk: `index=tuktukpay | stats count by source, event` — within a mi
 
 | Symptom | Cause |
 |---|---|
-| `make hec-test` times out | your IP is not on the *HEC access for ingestion* allow list, or the wrong hostname form (AWS vs GCP) |
+| `make hec-test` times out (`http 000`) — also when it worked earlier | your current public IP is not on the *HEC access for ingestion* allow list: a VPN reconnect or a new network changes it (compare `curl -s https://api.ipify.org` with the list); or the wrong hostname form (AWS vs GCP). While blocked, the collector logs `splunk_hec/platform_logs … Client.Timeout exceeded` and drops each batch after 120 s |
 | `{"text":"Invalid token","code":4}` | token mismatch / disabled |
 | `{"text":"Incorrect index","code":7}` | `SPLUNK_HEC_INDEX` is not in the token's *Selected indexes* |
 | `{"text":"Data channel is missing","code":10}` | indexer acknowledgement is on for the token |

@@ -129,6 +129,10 @@ precedence over `envFrom`, which is why the per-service values were removed from
 * On kind/minikube the kubelet's self-signed certificate makes the `kubelet_stats` scrape fail silently (no container CPU/memory
   metrics, so the memory/CPU detectors and the pod charts stay empty); the values set `insecure_skip_verify: true` for it. Remove
   that on EKS/GKE/AKS.
+* A laptop on a VPN: when the egress IP changes, the Splunk Cloud HEC allow list blocks the collector (`splunk_hec/platform_logs`
+  timeouts, `sending queue is full`; `make hec-test` → `http 000`) until the new address is added, and kind's CoreDNS (which forwards
+  to the host resolver) fails lookups for a few minutes (`lookup ingest.<realm>… no such host`), so traces and metrics show a gap
+  that heals on its own. Check with `kubectl -n splunk-otel logs ds/splunk-otel-collector-agent --since=10m | grep -c "Exporting failed"`.
 * Postgres and Redis are dev-grade Deployments here; use RDS/ElastiCache for anything longer than a workshop.
 * `deployment.environment` comes from the Helm value `environment`; the manifests also set it in `OTEL_RESOURCE_ATTRIBUTES`
   so the environment is consistent whichever path the telemetry takes.
