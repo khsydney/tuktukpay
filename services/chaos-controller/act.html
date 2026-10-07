@@ -854,14 +854,22 @@ async function poll() {
     $('paused-note').classList.toggle('show', !!traffic.paused);
   } catch (e) { /* controller restarting: keep last state */ }
 }
-async function startAct() {
-  const b = $('start'); b.disabled = true;
-  try { await fetch(`/scenarios/${NAME}`, { method: 'POST' }); await poll(); } finally { b.disabled = false; }
+// A failed call (tunnel dropped, controller restarting) is shown on the button for a few
+// seconds instead of being swallowed, so nobody keeps clicking a dead page.
+async function call(button, label, path) {
+  const original = button.textContent; button.disabled = true; button.textContent = `… ${label}`;
+  try {
+    const res = await fetch(path, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await poll(); button.textContent = original;
+  } catch (e) {
+    console.error(e);
+    button.textContent = `⚠ controller unreachable — try again`;
+    setTimeout(() => { button.textContent = original; }, 4000);
+  } finally { button.disabled = false; }
 }
-async function resetAll() {
-  const b = $('reset'); b.disabled = true;
-  try { await fetch('/reset', { method: 'POST' }); await poll(); } finally { b.disabled = false; }
-}
+async function startAct() { await call($('start'), 'starting', `/scenarios/${NAME}`); }
+async function resetAll() { await call($('reset'), 'resetting', '/reset'); }
 
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;

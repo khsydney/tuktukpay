@@ -7,7 +7,7 @@ CHAOS   ?= http://localhost:8090
 # ---- Kubernetes (the reference deployment) ----
 k8s-up:        ## create/update the kind cluster, build + load images, install the Splunk collector chart, deploy
 	k8s/kind-up.sh
-k8s-forward:   ## port-forward the UIs and APIs to localhost (self-healing)
+k8s-forward:   ## port-forward the UIs/APIs to localhost (not needed on kind: ports are published directly)
 	k8s/port-forward.sh
 k8s-down:      ## delete the kind cluster
 	k8s/port-forward.sh stop; kind delete cluster --name $${CLUSTER:-tuktukpay}

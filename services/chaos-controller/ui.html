@@ -49,6 +49,7 @@
   button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; font-size: 13px; }
   button.ghost:hover { border-color: var(--red); color: var(--red); }
   .status { font-size: 12px; color: var(--muted); }
+  .status.err { color: #f87171; font-weight: 600; }
   code { background: #0b1220; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
   .traffic { margin-left: auto; display: flex; align-items: center; gap: 10px; }
   .traffic .pill { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--green); color: var(--green); }
@@ -90,13 +91,25 @@
 const $ = (id) => document.getElementById(id);
 let defs = {}, state = {}, scenarios = {}, traffic = { paused: false };
 
+// Every call to the controller goes through api(): a failed request (tunnel dropped, pod
+// restarting) is shown in the status line instead of silently freezing the page.
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(`${options && options.method || 'GET'} ${path} -> HTTP ${res.status}`);
+  return res.json();
+}
+function reportError(e) {
+  const el = $('status');
+  el.textContent = `⚠ controller unreachable (${e.message}) — the page retries every 5 s; your click may not have been applied`;
+  el.classList.add('err');
+  console.error(e);
+}
+function clearError() { $('status').classList.remove('err'); }
+
 async function load() {
   let current;
   [defs, state, scenarios, current] = await Promise.all([
-    fetch('/flags/definitions').then(r => r.json()),
-    fetch('/flags').then(r => r.json()),
-    fetch('/scenarios').then(r => r.json()),
-    fetch('/scenarios/current').then(r => r.json()),
+    api('/flags/definitions'), api('/flags'), api('/scenarios'), api('/scenarios/current'),
   ]);
   traffic.paused = !!(state.traffic_paused && state.traffic_paused.enabled);
   renderActs(); renderFlags(); renderTraffic(); loadHistory();
@@ -140,50 +153,63 @@ function renderTraffic() {
   $('traffic-banner').classList.toggle('show', traffic.paused);
 }
 
+const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+
 async function toggleTraffic() {
   const btn = $('traffic-btn'); btn.disabled = true;
   try {
-    traffic = await fetch('/traffic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused: !traffic.paused }) }).then(r => r.json());
-  } finally { btn.disabled = false; }
+    // ask for the state the server does NOT have (not the inverse of a possibly stale page)
+    const now = await api('/traffic');
+    traffic = await post('/traffic', { paused: !now.paused });
+    clearError();
+  } catch (e) { reportError(e); } finally { btn.disabled = false; }
   renderTraffic(); loadHistory();
 }
 
 async function toggle(name, enabled) {
   document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
-  state[name] = await fetch(`/flags/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }).then(r => r.json());
+  try { state[name] = await post(`/flags/${name}`, { enabled }); clearError(); } catch (e) { reportError(e); }
   renderFlags(); loadHistory();
 }
 
 async function setParam(input) {
   const name = input.dataset.flag, key = input.dataset.param;
   let value = input.value; if (!isNaN(value) && value.trim() !== '') value = Number(value);
-  state[name] = await fetch(`/flags/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ params: { [key]: value } }) }).then(r => r.json());
+  try { state[name] = await post(`/flags/${name}`, { params: { [key]: value } }); clearError(); } catch (e) { reportError(e); }
   loadHistory();
 }
 
 async function runScenario(name) {
-  const res = await fetch(`/scenarios/${name}`, { method: 'POST' }).then(r => r.json());
-  state = res.flags; renderFlags(); loadHistory();
-  document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
-  $(`act-${name}`).classList.add('active');
+  const btn = document.querySelector(`#act-${name} .run`); if (btn) { btn.disabled = true; btn.textContent = '… starting'; }
+  try {
+    const res = await post(`/scenarios/${name}`);
+    state = res.flags; renderFlags(); clearError();
+    document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
+    $(`act-${name}`).classList.add('active');
+  } catch (e) { reportError(e); } finally { if (btn) { btn.disabled = false; btn.textContent = '▶ Run now'; } }
+  loadHistory();
 }
 
 async function resetAll() {
-  state = await fetch('/reset', { method: 'POST' }).then(r => r.json());
+  try { state = await post('/reset'); clearError(); } catch (e) { reportError(e); }
   renderFlags(); loadHistory();
   document.querySelectorAll('.act').forEach(a => a.classList.remove('active'));
 }
 
 async function loadHistory() {
-  const h = await fetch('/history').then(r => r.json());
-  $('history').innerHTML = h.slice().reverse().map(e => `${e.ts} · ${e.action} ${e.flag || e.scenario || ''}`).join('<br>') || 'no actions yet';
+  try {
+    const h = await api('/history');
+    $('history').innerHTML = h.slice().reverse().map(e => `${e.ts} · ${e.action} ${e.flag || e.scenario || ''}`).join('<br>') || 'no actions yet';
+  } catch (e) { reportError(e); }
 }
 
-load();
+load().catch(reportError);
 setInterval(async () => {
-  state = await fetch('/flags').then(r => r.json());
-  traffic.paused = !!(state.traffic_paused && state.traffic_paused.enabled);
-  renderFlags(); renderTraffic();
+  try {
+    state = await api('/flags');
+    traffic.paused = !!(state.traffic_paused && state.traffic_paused.enabled);
+    renderFlags(); renderTraffic(); clearError();
+  } catch (e) { reportError(e); }
 }, 5000);
 </script>
 </body>

@@ -1,0 +1,21 @@
+# kind cluster config used by k8s/kind-up.sh: the UI and API NodePorts are published on
+# localhost, so http://localhost:8090 (war room) and :8087 (agent console) work with no
+# `kubectl port-forward` tunnel in between (tunnels die under browser traffic and whenever
+# a pod restarts, which the Kubernetes acts do on purpose).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30090   # chaos-controller (war room)
+        hostPort: 8090
+      - containerPort: 30087   # shopping-agent (agentic checkout console)
+        hostPort: 8087
+      - containerPort: 30080   # checkout-api (payments API, smoke test)
+        hostPort: 8080
+      - containerPort: 30086   # merchant-copilot
+        hostPort: 8086
+      - containerPort: 30088   # wallet-sim
+        hostPort: 8088
+      - containerPort: 30085   # merchant-sim
+        hostPort: 8085

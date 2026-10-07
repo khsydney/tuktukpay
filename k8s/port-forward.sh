@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Port-forward the TukTukPay UIs and APIs from the cluster to localhost, in the background.
-# Each forward runs in a restart loop: `kubectl port-forward` quits whenever the pod behind the
-# service restarts (Acts 6/7 do that on purpose) or a connection errors, which would otherwise
-# leave the war-room panel dead in the browser.
+# Not needed on kind: kind-config.yaml publishes the NodePorts on localhost directly. Use this on
+# clusters without such mappings. Each forward runs in a restart loop: `kubectl port-forward`
+# quits whenever the pod behind the service restarts (Acts 6/7 do that on purpose) or a
+# connection errors, which would otherwise leave the war-room panel dead in the browser.
 #   k8s/port-forward.sh [namespace]      # default: tuktukpay
 #   k8s/port-forward.sh stop             # stop them
 set -euo pipefail

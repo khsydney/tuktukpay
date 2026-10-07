@@ -165,10 +165,12 @@ metadata:
   name: chaos-controller
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: chaos-controller
   ports:
   - port: 8090
+    nodePort: 30090
     targetPort: http
     name: http
 ---
@@ -248,10 +250,12 @@ metadata:
   name: checkout-api
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: checkout-api
   ports:
   - port: 8080
+    nodePort: 30080
     targetPort: http
     name: http
 ---
@@ -336,10 +340,12 @@ metadata:
   name: wallet-sim
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: wallet-sim
   ports:
   - port: 8088
+    nodePort: 30088
     targetPort: http
     name: http
 ---
@@ -432,10 +438,12 @@ metadata:
   name: shopping-agent
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: shopping-agent
   ports:
   - port: 8087
+    nodePort: 30087
     targetPort: http
     name: http
 ---
@@ -865,10 +873,12 @@ metadata:
   name: merchant-sim
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: merchant-sim
   ports:
   - port: 8085
+    nodePort: 30085
     targetPort: http
     name: http
 ---
@@ -1011,10 +1021,12 @@ metadata:
   name: merchant-copilot
   namespace: ${NAMESPACE}
 spec:
+  type: NodePort   # published on localhost by k8s/kind-config.yaml (kind); plain ClusterIP + port-forward works too
   selector:
     app: merchant-copilot
   ports:
   - port: 8086
+    nodePort: 30086
     targetPort: http
     name: http
 ---

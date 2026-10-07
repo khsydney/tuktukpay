@@ -15,3 +15,5 @@ workshop/
 !/README.md
 !/services/checkout-api/README.md
 !/docs/*.md
+!/k8s/README.md
+!/splunk/apm-metricsets.md

@@ -18,8 +18,8 @@ CLUSTER=${CLUSTER:-tuktukpay}
 SERVICES="chaos-controller checkout-api risk-engine payment-router acquirer-sim ledger webhook-dispatcher merchant-copilot wallet-sim loadgen"
 
 if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
-  echo "== creating kind cluster $CLUSTER"
-  kind create cluster --name "$CLUSTER" --wait 120s
+  echo "== creating kind cluster $CLUSTER (UI/API ports published on localhost, see kind-config.yaml)"
+  kind create cluster --name "$CLUSTER" --config "$DIR/kind-config.yaml" --wait 120s
 fi
 kubectl config use-context "kind-$CLUSTER" >/dev/null
 
@@ -56,7 +56,8 @@ echo "== deploying TukTukPay ($NAMESPACE / $DEPLOYMENT_ENVIRONMENT)"
 IMAGE_REGISTRY=tuktukpay-workshop NAMESPACE="$NAMESPACE" DEPLOYMENT_ENVIRONMENT="$DEPLOYMENT_ENVIRONMENT" "$DIR/apply.sh"
 kubectl -n "$NAMESPACE" rollout status deployment --timeout=300s 2>/dev/null || kubectl -n "$NAMESPACE" get pods
 echo
-echo "UIs + API:    k8s/port-forward.sh $NAMESPACE     -> http://localhost:8090 (war room), :8087 (agent console), :8080, :8086"
-echo "smoke test:   scripts/smoke-test.sh   (after the port-forwards)"
+echo "UIs + API:    http://localhost:8090 (war room), :8087 (agent console), :8080 (payments), :8086 (copilot) — direct via NodePorts"
+echo "              (other clusters without the kind port mappings: k8s/port-forward.sh $NAMESPACE)"
+echo "smoke test:   scripts/smoke-test.sh"
 echo "K8s acts:     act6 / act7 from the panel; k8s/acts/oversize-rollout.sh, k8s/acts/bad-image.sh, k8s/acts/rollback.sh"
 echo "tear down:    kind delete cluster --name $CLUSTER"

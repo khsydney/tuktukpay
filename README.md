@@ -250,17 +250,18 @@ release).
 application values to the ConfigMap/Secret, and the application pods are rolled when those changed. The same works
 after a code change (the image is rebuilt and loaded; restart the deployment if its manifest did not change).
 
-### Step 4 — Reach the UIs and check that everything is running
+### Step 4 — Check that everything is running
 
 ```bash
-k8s/port-forward.sh               # or: make k8s-forward — tunnels :8090 :8087 :8080 :8086 :8088 :8085 to localhost
 kubectl -n tuktukpay get pods     # every pod 1/1 Running
 scripts/smoke-test.sh             # or: make smoke — sends payments + an agent payment + a copilot question
 ```
 
-kind has no load balancer, so the UIs are reached through `kubectl port-forward` tunnels; the script keeps them
-alive across the pod restarts the Kubernetes acts cause. A successful smoke test prints health checks, a payment
-result with a `payment_id`, the ledger read-back and a copilot answer.
+On kind the UI and API ports are published straight on `localhost` (NodePort services + the port mappings in
+[`k8s/kind-config.yaml`](k8s/kind-config.yaml)), so nothing else has to run on the laptop. On a cluster without
+such mappings use `k8s/port-forward.sh` (or `make k8s-forward`) for self-healing `kubectl port-forward` tunnels.
+A successful smoke test prints health checks, a payment result with a `payment_id`, the ledger read-back and a
+copilot answer.
 
 ### Step 5 — Open the web UIs
 
@@ -299,7 +300,6 @@ result with a `payment_id`, the ledger read-back and a copilot answer.
 make pause                        # stop simulated traffic but keep everything running (saves laptop CPU)
 make resume                       # start traffic again
 make reset                        # every failure flag off
-k8s/port-forward.sh stop          # close the tunnels
 kind delete cluster --name tuktukpay    # or: make k8s-down — removes the whole cluster
 ```
 
@@ -326,7 +326,7 @@ Two more Kubernetes incidents are scripts rather than flags, because they are ro
 (a pod no node can fit → Pending) and `k8s/acts/bad-image.sh` (ImagePullBackOff); `k8s/acts/rollback.sh <deployment>`
 undoes them. Expected answers, evidence lines and AI prompts for every act: [docs/ai-troubleshooting.md](docs/ai-troubleshooting.md).
 
-From the command line (through the port-forward):
+From the command line (the ports are published on `localhost` by kind):
 
 ```bash
 make act1                                   # or: curl -X POST localhost:8090/scenarios/act1  (… act7)
@@ -400,8 +400,8 @@ curl -s -X POST localhost:8086/v1/ask -H 'Content-Type: application/json' \
 | Make target | Does |
 |---|---|
 | `make k8s-up` / `make k8s-down` | create or update the kind cluster + stack / delete the cluster |
-| `make k8s-forward` | port-forward the UIs and APIs to localhost (self-healing) |
-| `make smoke` | end-to-end smoke test (through the port-forwards) |
+| `make k8s-forward` | port-forward the UIs and APIs to localhost — only for clusters without kind's port mappings |
+| `make smoke` | end-to-end smoke test against `localhost:8080` |
 | `make pause` / `make resume` | stop / restart simulated traffic |
 | `make baseline`, `make act1` … `make act7`, `make reset` | storyline presets |
 | `make hec-test` | send one test event to the Splunk Cloud HEC configured in `.env` |
@@ -446,7 +446,7 @@ SPLUNK_HEC_INDEX=tuktukpay
 | You see services but no new data | Traffic may be paused — check the pill on http://localhost:8090 or run `make resume` |
 | No logs in Splunk (`make logs-status` shows `send_failed`) | `make hec-test`: a timeout means your IP is not on the stack's *HEC access for ingestion* allow list; `Incorrect index` / `Invalid token` point at the token settings — see [docs/logs-setup.md](docs/logs-setup.md) |
 | Collector logs `HTTP "/v1/log" 404` | `SPLUNK_HEC_URL` is unset, so logs fall back to the Observability Cloud endpoint, which needs the Observability Logs entitlement; set the HEC variables |
-| The war-room panel or console stops responding | The `kubectl port-forward` tunnel dropped (pods restart during act6/act7): run `k8s/port-forward.sh` again — it restarts each tunnel automatically |
+| The war-room panel or console stops responding | On kind the ports are direct (no tunnel): check `kubectl -n tuktukpay get pods` and that the cluster was created with `k8s/kind-config.yaml` (`docker port tuktukpay-control-plane` lists 8090…). With `k8s/port-forward.sh` tunnels on other clusters, run it again; the pages now show "controller unreachable" instead of freezing |
 | Pods `Pending`, `ImagePullBackOff` or `CrashLoopBackOff` outside an act | `kubectl -n tuktukpay describe pod <pod>`; after a code change re-run `k8s/kind-up.sh` so the image is rebuilt and loaded into kind |
 | Traces missing from APM on Kubernetes | Check `kubectl -n tuktukpay logs deploy/risk-engine` for `Failed to export … $(SPLUNK_OTEL_AGENT)`: in `k8s/tuktukpay.yaml` the `SPLUNK_OTEL_AGENT` variable must stay first in every `env` list |
 | No container CPU / memory in the Kubernetes navigator | On kind/minikube the `kubelet_stats` scrape needs `insecure_skip_verify` (set in `k8s/values-splunk-otel-collector.yaml`); `helm upgrade` complaining about a renamed component means the chart moved on — see k8s/README.md |
