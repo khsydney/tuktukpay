@@ -46,14 +46,7 @@ def _crash_loop_watch():
                       f"FATAL: startup check failed after rollout {release}: KYA registry schema migration kya_agents_v2 did not apply "
                       f"(relation \"kya_agents_v2\" does not exist); exiting with code {code}",
                       **{"error.type": "SchemaMigrationError", "deployment.release": release, "process.exit_code": code, "peer.service": "kya-registry-db"})
-            try:  # give the OTLP log exporter a moment to ship the line before the process is gone
-                from opentelemetry._logs import get_logger_provider
-                flush = getattr(get_logger_provider(), "force_flush", None)
-                if flush:
-                    flush(timeout_millis=3000)
-            except Exception:  # noqa: BLE001
-                pass
-            time.sleep(1)
+            time.sleep(2)  # the batch log processor exports every second; never block on a flush here
             os._exit(int(code))
         time.sleep(2)
 

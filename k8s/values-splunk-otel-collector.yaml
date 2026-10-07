@@ -18,7 +18,6 @@ splunkObservability:
   # accessToken: set with --set or via an existing secret (secret.create=false, secret.name=...)
   profilingEnabled: true             # AlwaysOn Profiling data path
   infrastructureMonitoringEventsEnabled: true
-  logsEnabled: false                 # true only if your org has the Observability Logs entitlement
 
 # Logs -> Splunk Cloud Platform over HEC; Log Observer Connect reads them from Observability
 # Cloud (docs/logs-setup.md). The applications export their own OTLP log records (same code as
@@ -73,6 +72,12 @@ instrumentation:
 # --- Agent (DaemonSet) pipeline tweaks: same workshop plumbing as otel/collector-config.yaml
 agent:
   config:
+    receivers:
+      # kind (and minikube) kubelets present a self-signed certificate; without this the
+      # /stats/summary scrape fails and no container CPU / memory metrics reach Splunk.
+      # Remove on EKS/GKE/AKS, where the kubelet certificate is signed by the cluster CA.
+      kubelet_stats:
+        insecure_skip_verify: true
     processors:
       filter/drop-chaos-polling:
         error_mode: ignore
@@ -99,14 +104,49 @@ agent:
               - set(attributes["payment.outcome"], attributes["http.response.header.x_route_outcome"][0]) where attributes["http.response.header.x_route_outcome"] != nil
               - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]route.*")
               - delete_matching_keys(attributes, "^http\\.response\\.header\\.x[-_]payment.*")
+      # Same as otel/collector-config.yaml: `source` = service name (service.name stays an indexed field)
+      # and a lowercase `severity` field for Log Observer Connect, derived from the severity text or
+      # number (Go's slog bridge sets only the number). Kubernetes events from the cluster receiver
+      # keep their own sourcetype and land in the same index.
+      transform/logs:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(resource.attributes["com.splunk.source"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+              - set(attributes["severity"], ConvertCase(severity_text, "lower")) where severity_text != nil and severity_text != ""
+              - set(attributes["severity"], "debug") where attributes["severity"] == nil and severity_number >= 1 and severity_number <= 8
+              - set(attributes["severity"], "info") where attributes["severity"] == nil and severity_number >= 9 and severity_number <= 12
+              - set(attributes["severity"], "warn") where attributes["severity"] == nil and severity_number >= 13 and severity_number <= 16
+              - set(attributes["severity"], "error") where attributes["severity"] == nil and severity_number >= 17 and severity_number <= 20
+              - set(attributes["severity"], "critical") where attributes["severity"] == nil and severity_number >= 21
+              - set(attributes["severity"], "warn") where attributes["severity"] == "warning"
+              - set(attributes["severity"], "error") where attributes["severity"] == "severe" or attributes["severity"] == "err"
+              - set(attributes["severity"], "critical") where attributes["severity"] == "fatal"
+              - set(attributes["severity"], "info") where attributes["severity"] == "information" or attributes["severity"] == "info2" or attributes["severity"] == "info3" or attributes["severity"] == "info4"
+              - set(attributes["severity"], "debug") where attributes["severity"] == "fine" or attributes["severity"] == "finer" or attributes["severity"] == "finest" or attributes["severity"] == "trace" or attributes["severity"] == "debug2" or attributes["severity"] == "debug3" or attributes["severity"] == "debug4"
     service:
       pipelines:
         traces:
+          # chart 0.161 names (k8s_attributes, resource_detection) + the two workshop processors
           processors:
             - memory_limiter
-            - k8sattributes
+            - k8s_attributes
             - filter/drop-chaos-polling
             - transform/router-headers
             - batch
-            - resourcedetection
+            - resource_detection
             - resource
+            - resource/add_environment
+        logs:
+          # the chart's default logs pipeline + transform/logs before the batch
+          processors:
+            - memory_limiter
+            - k8s_attributes
+            - filter/logs
+            - transform/logs
+            - batch
+            - resource_detection
+            - resource
+            - resource/logs
+            - resource/add_environment

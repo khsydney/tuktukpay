@@ -192,12 +192,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-checkout-api:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -274,12 +274,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-wallet-sim:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -361,12 +361,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-wallet-sim:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -458,12 +458,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-risk-engine:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -540,12 +540,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-payment-router:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -623,12 +623,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-acquirer-sim:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -709,12 +709,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-ledger:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -795,12 +795,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-webhook-dispatcher:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -880,12 +880,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-webhook-dispatcher:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -942,12 +942,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-merchant-copilot:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
@@ -1022,12 +1022,12 @@ spec:
         image: ${IMAGE_REGISTRY}/tuktukpay-loadgen:latest
         imagePullPolicy: IfNotPresent
         env:
-        - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: SPLUNK_OTEL_AGENT
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://$(SPLUNK_OTEL_AGENT):4317
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES

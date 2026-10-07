@@ -349,12 +349,69 @@ resource "signalfx_dashboard" "warroom" {
     height   = 1
   }
   chart {
-    chart_id = signalfx_text_chart.logs_howto.id
+    chart_id = signalfx_time_chart.k8s_restarts.id
     row      = 7
+    column   = 0
+    width    = 4
+    height   = 1
+  }
+  chart {
+    chart_id = signalfx_time_chart.k8s_memory_pct.id
+    row      = 7
+    column   = 4
+    width    = 4
+    height   = 1
+  }
+  chart {
+    chart_id = signalfx_time_chart.k8s_cpu_pct.id
+    row      = 7
+    column   = 8
+    width    = 4
+    height   = 1
+  }
+  chart {
+    chart_id = signalfx_text_chart.logs_howto.id
+    row      = 8
     column   = 0
     width    = 12
     height   = 1
   }
+}
+
+# ---- Kubernetes row (k8s/ variant): what Acts 6 and 7 look like from the cluster ----
+
+resource "signalfx_time_chart" "k8s_restarts" {
+  name         = "Container restarts — Acts 6 & 7 (Kubernetes)"
+  description  = "k8s.container.restarts delta per container in the stack's namespace"
+  program_text = <<-EOF
+    data('k8s.container.restarts', filter=filter('k8s.namespace.name', '${var.k8s_namespace}')).delta().sum(by=['k8s.container.name']).publish(label='restarts')
+  EOF
+  plot_type         = "ColumnChart"
+  axis_left { min_value = 0 }
+}
+
+resource "signalfx_time_chart" "k8s_memory_pct" {
+  name         = "Container memory vs limit (%) — Act 6 (Kubernetes)"
+  description  = "container.memory.usage / k8s.container.memory_limit; the ledger climbs to 100% and is OOMKilled"
+  program_text = <<-EOF
+    usage = data('container.memory.usage', filter=filter('k8s.namespace.name', '${var.k8s_namespace}')).sum(by=['k8s.container.name'])
+    limit = data('k8s.container.memory_limit', filter=filter('k8s.namespace.name', '${var.k8s_namespace}')).sum(by=['k8s.container.name'])
+    (usage / limit * 100).publish(label='% of limit')
+  EOF
+  plot_type         = "LineChart"
+  axis_left { min_value = 0 max_value = 110 }
+}
+
+resource "signalfx_time_chart" "k8s_cpu_pct" {
+  name         = "Container CPU vs limit (%) — Act 2 on Kubernetes"
+  description  = "container.cpu.utilization / k8s.container.cpu_limit; risk-engine pins its 500m limit under model v3"
+  program_text = <<-EOF
+    cpu   = data('container.cpu.utilization', filter=filter('k8s.namespace.name', '${var.k8s_namespace}')).sum(by=['k8s.container.name'])
+    limit = data('k8s.container.cpu_limit', filter=filter('k8s.namespace.name', '${var.k8s_namespace}')).sum(by=['k8s.container.name'])
+    (cpu / limit * 100).publish(label='% of limit')
+  EOF
+  plot_type         = "LineChart"
+  axis_left { min_value = 0 }
 }
 
 # Logs live in Splunk Cloud Platform (Log Observer Connect); this panel carries the
