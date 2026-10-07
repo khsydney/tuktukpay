@@ -242,8 +242,13 @@ k8s/kind-up.sh                    # or: make k8s-up
 What it does: creates the `tuktukpay` kind cluster, builds the images with Compose and loads them into the node,
 installs the **Splunk OTel Collector chart** (collector agent, cluster receiver, OpenTelemetry Operator, Splunk Platform
 log exporter when the HEC variables are set), applies [`k8s/tuktukpay.yaml`](k8s/tuktukpay.yaml) into namespace
-`tuktukpay`, and waits for the rollout. First run ≈ 5–8 minutes; re-running it is safe (it rebuilds changed images
-and upgrades the release).
+`tuktukpay` with the application settings from `.env` (a ConfigMap + a Secret the pods read through `envFrom`), and
+waits for the rollout. First run ≈ 5–8 minutes; re-running it is safe (it rebuilds changed images and upgrades the
+release).
+
+**Changed `.env`?** Run `k8s/kind-up.sh` (or `make k8s-up`) again: Splunk/HEC values go to the collector chart, the
+application values to the ConfigMap/Secret, and the application pods are rolled when those changed. The same works
+after a code change (the image is rebuilt and loaded; restart the deployment if its manifest did not change).
 
 ### Step 4 — Reach the UIs and check that everything is running
 
@@ -356,16 +361,17 @@ Do not run both at once on one machine: they share the host ports and the laptop
 
 ## Optional: real LLMs, .NET ledger, dual-shipping
 
-**Real LLM providers** — `mock | openai | anthropic | bedrock`. On Kubernetes set the variables on the deployments
-(or edit `k8s/tuktukpay.yaml`):
+**Real LLM providers** — `mock | openai | anthropic | bedrock`, configured in `.env` for both deployments:
 
-```bash
-kubectl -n tuktukpay set env deployment/merchant-copilot COPILOT_PROVIDER=openai COPILOT_MODEL=gpt-4o-mini OPENAI_API_KEY=...
-kubectl -n tuktukpay set env deployment/shopping-agent  AGENT_PROVIDER=openai  AGENT_MODEL=gpt-4o-mini  OPENAI_API_KEY=...
+```dotenv
+COPILOT_PROVIDER=openai          # mock | openai | anthropic | bedrock
+COPILOT_MODEL=gpt-4o-mini
+OPENAI_API_KEY=...               # or ANTHROPIC_API_KEY / AWS credentials + AWS_REGION
+AGENT_PROVIDER=mock              # same options for the shopping agent
 ```
 
-On Compose put the same keys in `.env` (`ANTHROPIC_API_KEY` / AWS credentials + `AWS_REGION` for the other
-providers) and `docker compose up -d merchant-copilot shopping-agent`.
+Then `make k8s-up` (Kubernetes: the keys land in the `tuktukpay-secrets` Secret and the pods are rolled) or
+`docker compose up -d merchant-copilot shopping-agent` (Compose).
 
 **.NET ledger** instead of Node.js (same API, same traces): on Kubernetes swap the `ledger` Deployment's image and
 annotation as described in [k8s/README.md](k8s/README.md#4-net-variant); on Compose `make dotnet`.

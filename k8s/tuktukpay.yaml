@@ -47,6 +47,9 @@ spec:
           value: tuktukpay
         - name: POSTGRES_DB
           value: tuktukpay
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         ports:
         - containerPort: 5432
         volumeMounts:
@@ -201,7 +204,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -218,10 +221,11 @@ spec:
           value: http://ledger:8084
         - name: WALLET_URL
           value: http://wallet-sim:8088
-        - name: AMP_SHARED_SECRET
-          value: tuktukpay-amp-demo-secret
         - name: REDIS_ADDR
           value: redis:6379
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -283,7 +287,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -298,8 +302,9 @@ spec:
           value: 'true'
         - name: OTEL_SERVICE_NAME
           value: wallet-sim
-        - name: AMP_SHARED_SECRET
-          value: tuktukpay-amp-demo-secret
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -370,7 +375,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -391,12 +396,11 @@ spec:
           value: http://wallet-sim:8088
         - name: MERCHANT_SIM_URL
           value: http://merchant-sim:8085
-        - name: AMP_SHARED_SECRET
-          value: tuktukpay-amp-demo-secret
-        - name: AGENT_PROVIDER
-          value: mock
         - name: CONSOLE_SPLUNK_REALM
           value: ${SPLUNK_REALM}
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -467,7 +471,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -482,6 +486,9 @@ spec:
           value: 'true'
         - name: OTEL_SERVICE_NAME
           value: risk-engine
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 200m
@@ -549,7 +556,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -566,6 +573,9 @@ spec:
           value: 'true'
         - name: OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS
           value: x-payment-acquirer,x-route-attempts,x-route-failover,x-route-outcome
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -632,7 +642,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -643,12 +653,13 @@ spec:
           value: 'true'
         - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT  # ... to the agent's 4318 port (docs/log-schema.md)
           value: http://$(SPLUNK_OTEL_AGENT):4318/v1/logs
-        - name: LOG_LEVEL
-          value: info
         - name: PORT
           value: '8083'
         - name: SPLUNK_PROFILER_ENABLED
           value: 'true'
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -718,7 +729,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -729,8 +740,6 @@ spec:
           value: 'true'
         - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT  # ... to the agent's 4318 port (docs/log-schema.md)
           value: http://$(SPLUNK_OTEL_AGENT):4318/v1/logs
-        - name: LOG_LEVEL
-          value: info
         - name: PORT
           value: '8084'
         - name: PG_POOL_SIZE
@@ -740,6 +749,9 @@ spec:
             secretKeyRef:
               name: tuktukpay-db
               key: DATABASE_URL
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -804,7 +816,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -819,6 +831,9 @@ spec:
           value: 'true'
         - name: OTEL_SERVICE_NAME
           value: merchant-sim
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -889,7 +904,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -908,6 +923,9 @@ spec:
           value: redis://redis:6379/0
         - name: MERCHANT_SIM_URL
           value: http://merchant-sim:8085
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -951,7 +969,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -968,8 +986,9 @@ spec:
           value: merchant-copilot
         - name: LEDGER_URL
           value: http://ledger:8084
-        - name: COPILOT_PROVIDER
-          value: mock
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
@@ -1031,7 +1050,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_PROTOCOL
           value: grpc
         - name: OTEL_RESOURCE_ATTRIBUTES
-          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=2026.09.1
+          value: deployment.environment=${DEPLOYMENT_ENVIRONMENT},service.namespace=tuktukpay,service.version=${SERVICE_VERSION}
         - name: OTEL_PROPAGATORS
           value: tracecontext,baggage
         - name: CHAOS_URL
@@ -1050,10 +1069,9 @@ spec:
           value: http://checkout-api:8080
         - name: COPILOT_URL
           value: http://merchant-copilot:8086
-        - name: BASE_RPS
-          value: '4'
-        - name: AMP_SHARED_SECRET
-          value: tuktukpay-amp-demo-secret
+        envFrom:
+        - configMapRef: {name: tuktukpay-config, optional: true}   # app settings from .env (k8s/apply.sh)
+        - secretRef: {name: tuktukpay-secrets, optional: true}     # AMP secret + LLM keys from .env
         resources:
           requests:
             cpu: 100m
