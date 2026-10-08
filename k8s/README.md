@@ -138,6 +138,13 @@ act again afterwards.
   in the same minute and resumes on wake — followed by a minute of CoreDNS `no such host` errors and, on a VPN, usually a new
   egress address (next bullet). `make awake` (`caffeinate -dimsu`) stops idle sleep; nothing stops clamshell sleep, so keep the
   lid open during the session. `pmset -g log | grep -E "Sleep|Wake"` tells you afterwards what happened.
+* `helm upgrade` (inside `kind-up.sh`) ending in `context deadline exceeded`, the collector agent pod stuck `Terminating`, and —
+  after a `kubectl delete pod --force` — the replacement agent in CrashLoopBackOff with `listen tcp 127.0.0.1:8889: bind: address
+  already in use`: the forced delete removed the pod object but the old container kept running on the node (seen after a
+  sleep/wake cycle). While that lasts **nothing** is exported — traces and metrics included. Fix: on the node,
+  `docker exec tuktukpay-control-plane crictl ps -a | grep otel-collector`, then `crictl stop <id>; crictl rm <id>` for the container
+  whose pod no longer exists (and `crictl stopp/rmp` its sandbox); the DaemonSet recovers within a minute. Re-run `k8s/kind-up.sh`
+  afterwards so the Helm release is recorded as deployed again.
 * A laptop on a VPN: when the egress IP changes, the Splunk Cloud HEC allow list blocks the collector (`splunk_hec/platform_logs`
   timeouts, `sending queue is full`; `make hec-test` → `http 000`) until the new address is added, and kind's CoreDNS (which forwards
   to the host resolver) fails lookups for a few minutes (`lookup ingest.<realm>… no such host`), so traces and metrics show a gap

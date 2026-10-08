@@ -12,10 +12,14 @@ k8s-forward:   ## port-forward the UIs/APIs to localhost (not needed on kind: po
 k8s-down:      ## delete the kind cluster
 	k8s/port-forward.sh stop; kind delete cluster --name $${CLUSTER:-tuktukpay}
 k8s-logs-status: ## spans / metric points / log records the collector agent has sent or failed to send, per exporter
-	@kubectl -n splunk-otel run otel-metrics-$$$$ --rm -i --quiet --restart=Never --image=curlimages/curl:8.10.1 \
-	  --overrides='{"spec":{"hostNetwork":true}}' --command -- curl -s -m 5 http://127.0.0.1:8889/metrics \
+	@P=otel-metrics-$$$$; kubectl -n splunk-otel run $$P --restart=Never --image=curlimages/curl:8.10.1 \
+	  --overrides='{"spec":{"hostNetwork":true}}' --command -- curl -s -m 5 http://127.0.0.1:8889/metrics >/dev/null \
+	  && kubectl -n splunk-otel wait --for=jsonpath='{.status.phase}'=Succeeded pod/$$P --timeout=90s >/dev/null \
+	  && kubectl -n splunk-otel logs $$P \
 	  | grep -E '^otelcol_exporter_(sent|send_failed|enqueue_failed)_(spans|metric_points|log_records)|^otelcol_exporter_queue_size' \
-	  | sed -E 's/\{[^}]*exporter="([^"]*)"[^}]*\}/ [\1]/' | sort || echo "collector agent metrics not reachable"
+	  | sed -E 's/\{[^}]*exporter="([^"]*)"[^}]*\}/ [\1]/' | sort || echo "collector agent metrics not reachable"; \
+	  kubectl -n splunk-otel delete pod $$P --wait=false >/dev/null 2>&1 || true
+	# (`kubectl run --rm -i` loses the output when the container finishes before attach, hence run/wait/logs)
 awake:         ## keep the Mac from idle-sleeping while the demo runs (a closed lid still sleeps it); Ctrl-C to stop
 	caffeinate -dimsu
 
