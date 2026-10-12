@@ -17,6 +17,10 @@ CLUSTER=${CLUSTER:-tuktukpay}
 
 SERVICES="chaos-controller checkout-api risk-engine payment-router acquirer-sim ledger webhook-dispatcher merchant-copilot wallet-sim loadgen"
 
+# After a reboot Docker Desktop is not running and every docker/kind/kubectl call below fails in
+# its own confusing way; say it once. The kind node container restarts by itself once Docker is up.
+docker info >/dev/null 2>&1 || { echo "Docker is not running: start Docker Desktop (open -a Docker), wait for the whale, then run this again." >&2; exit 1; }
+
 if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   echo "== creating kind cluster $CLUSTER (UI/API ports published on localhost, see kind-config.yaml)"
   kind create cluster --name "$CLUSTER" --config "$DIR/kind-config.yaml" --wait 120s
